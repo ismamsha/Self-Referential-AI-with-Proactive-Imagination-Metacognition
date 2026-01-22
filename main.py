@@ -11,8 +11,11 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 from collections import deque
 import random
+import os
 import matplotlib.pyplot as plt
 import time
+from helpers import EmergencyResponse, ResourceBuffer
+import json
 
 # ============================================================================
 # DATA STRUCTURES
@@ -99,14 +102,47 @@ class ActorCritic(nn.Module):
 # ============================================================================
 
 class HomeostasisEnv:
-    """Environment with homeostasis-focused rewards"""
+    """Environment with homeostasis-focused rewards - HARD MODE"""
     
-    def __init__(self, obs_dim=10):
+    def __init__(self, obs_dim=10, difficulty="hard"):
         self.r = 1.0  # Resources (0-1)
         self.d = 0.0  # Degradation (0-1)
         self.step_count = 0
         self.obs_dim = obs_dim
         self.max_steps = 100
+        self.difficulty = difficulty
+        
+        # Difficulty parameters
+        if difficulty == "hard":
+            self.shock_probability = 0.12  # 12% (was 5%)
+            self.shock_resource_loss = 0.3  # (was 0.2)
+            self.shock_degradation = 0.08  # (was 0.05)
+            self.rest_recovery = 0.21  # slightly increased for conservative rebalance
+            self.repair_cost = 0.15  # (was 0.1)
+            self.work_resource_multiplier = 1.15  # reduced to lower collapse risk
+            self.work_degradation_multiplier = 1.2  # reduced degradation multiplier
+            self.danger_threshold_low = 0.15  # (was 0.2)
+            self.danger_threshold_high = 0.8  # (was 0.7)
+        elif difficulty == "expert":
+            self.shock_probability = 0.15
+            self.shock_resource_loss = 0.35
+            self.shock_degradation = 0.1
+            self.rest_recovery = 0.1
+            self.repair_cost = 0.2
+            self.work_resource_multiplier = 1.5
+            self.work_degradation_multiplier = 1.6
+            self.danger_threshold_low = 0.1
+            self.danger_threshold_high = 0.75
+        else:  # normal
+            self.shock_probability = 0.05
+            self.shock_resource_loss = 0.2
+            self.shock_degradation = 0.05
+            self.rest_recovery = 0.2
+            self.repair_cost = 0.1
+            self.work_resource_multiplier = 1.0
+            self.work_degradation_multiplier = 1.0
+            self.danger_threshold_low = 0.2
+            self.danger_threshold_high = 0.7
         
     def reset(self):
         """Reset environment to initial state"""
@@ -130,17 +166,17 @@ class HomeostasisEnv:
         load = 0.0
         shocked = False
         
-        # External shock (5% chance)
-        if random.random() < 0.05:
-            self.r = max(0.0, self.r - 0.2)
-            self.d = min(1.0, self.d + 0.05)
+        # External shock (harder difficulties have more frequent shocks)
+        if random.random() < self.shock_probability:
+            self.r = max(0.0, self.r - self.shock_resource_loss)
+            self.d = min(1.0, self.d + self.shock_degradation)
             shocked = True
         
         # Execute action
         if action_idx == 0:  # REST
             # Rest efficiency depends on degradation
             rest_efficiency = 1.0 - self.d
-            recovery = 0.2 * rest_efficiency
+            recovery = self.rest_recovery * rest_efficiency
             self.r = min(1.0, self.r + recovery)
             load = 0.1
             
@@ -151,12 +187,12 @@ class HomeostasisEnv:
             
         elif action_idx == 1:  # REPAIR
             # Repair reduces degradation
-            if self.r >= 0.1:
+            if self.r >= self.repair_cost:
                 repair_amount = 0.1
                 self.d = max(0.0, self.d - repair_amount)
-                self.r -= 0.1
+                self.r -= self.repair_cost
                 load = 0.3
-                
+
                 # Reward for repairing when needed
                 if self.d > 0.4:
                     reward = 0.4
@@ -176,36 +212,39 @@ class HomeostasisEnv:
                 intensity = 0.7
             else:  # action_idx == 4
                 intensity = 0.4
-            
-            resource_cost = intensity * 0.1
-            degradation_cost = intensity * 0.01
-            
+
+            # Adjusted costs for difficulty
+            resource_cost = intensity * 0.1 * self.work_resource_multiplier
+            degradation_cost = intensity * 0.01 * self.work_degradation_multiplier
+
             # Check if we can work
             if self.r >= resource_cost:
-                # Base work reward
-                base_reward = intensity * 1.5
-                
+                # FIXED: scale reward with current resources
+                base_reward = intensity * (1.0 + self.r * 0.5)
+
                 # Efficiency bonus for working in good conditions
                 if self.r > 0.6 and self.d < 0.3:
-                    reward = base_reward * 1.2
-                else:
-                    reward = base_reward
-                
+                    # Reduce cost in good conditions
+                    resource_cost = intensity * 0.08 * (1.0 + self.d)
+                    # Small bonus
+                    base_reward += 0.3
+
+                reward = base_reward
                 self.r -= resource_cost
                 self.d = min(1.0, self.d + degradation_cost)
                 load = intensity
-                
+
                 # Penalty for working in dangerous conditions
-                if self.r < 0.2:
+                if self.r < self.danger_threshold_low:
                     reward -= 0.3
-                if self.d > 0.7:
+                if self.d > self.danger_threshold_high:
                     reward -= 0.4
-                    
+
             else:
                 # Severe penalty for overworking
                 reward = -0.5
                 load = 0.8
-                
+
             status = f"WORKING (intensity: {intensity:.1f})"
         
         # Ensure bounds
@@ -277,6 +316,8 @@ class ProactiveSelfReferentialAgent:
         self.exploration_rate = 0.3
         self.min_exploration = 0.05
         self.exploration_decay = 0.995
+        # Resource buffer (can be overridden in metacognitive agent)
+        self.resource_buffer = None
         
     def compute_effective_beta(self, current_state: SelfState):
         """Nonlinear anxiety: β increases near critical thresholds"""
@@ -471,9 +512,17 @@ class ProactiveSelfReferentialAgent:
             actor_losses.append(actor_loss.item())
             critic_losses.append(critic_loss.item())
         
-        # Decay exploration
-        self.exploration_rate = max(self.min_exploration, 
-                                  self.exploration_rate * self.exploration_decay)
+        # Adaptive exploration based on doubt and resources
+        # If highly uncertain -> increase exploration floor
+        if self.self_state.doubt_t > 0.2:
+            self.exploration_rate = max(0.3, self.exploration_rate)
+        # If resources are critically low -> slightly reduce exploration to favor safe actions
+        elif self.self_state.r_t < 0.3:
+            self.exploration_rate = min(0.4, self.exploration_rate * 0.98)
+        else:
+            # Default decay
+            self.exploration_rate = max(self.min_exploration, 
+                                      self.exploration_rate * self.exploration_decay)
         
         return (np.mean(actor_losses) if actor_losses else 0,
                 np.mean(critic_losses) if critic_losses else 0,
@@ -504,35 +553,71 @@ class MetacognitiveSelfAgent(ProactiveSelfReferentialAgent):
     def __init__(self, obs_dim=10, action_dim=5, beta=0.5, lr=1e-3):
         super().__init__(obs_dim, action_dim, beta, lr)
         
-        # Metacognitive thresholds
-        self.doubt_threshold = 0.15  # When to enter caution state
-        self.calibration_threshold = 0.05  # When doubt is low enough to resume normal operations
+        # Metacognitive thresholds (recalibrated for hard mode)
+        # CRITICAL FIX: Lower thresholds so caution mode triggers sensibly
+        # Expert-mode: be more paranoid by default
+        self.doubt_threshold = 0.02
+        self.calibration_threshold = 0.005
         
-        # Doubt decay rate (when predictions are accurate)
-        self.doubt_decay = 0.95
+        # Doubt decay rate (when predictions are accurate) - decay slower in danger
+        self.doubt_decay = 0.85
+        self.emergency_doubt_boost = 0.2
         
-        # Safe action set (REST and REPAIR)
-        self.safe_actions = [0, 1]
+        # Track recent failures to boost doubt
+        self.recent_failures = deque(maxlen=5)
+        self.failure_boost_multiplier = 1.5
+        
+        # Safe action set (REST, REPAIR, and allow WORK_LOW)
+        self.safe_actions = [0, 1, 4]
         
         # Track if we're in caution mode
         self.in_caution_mode = False
         self.caution_mode_duration = 0
         
-    def update_metacognition(self, predicted_tensor, actual_tensor):
+        # Catastrophe memory to remember death scenarios
+        self.catastrophe_memory = CatastropheMemory()
+        # Track recent consecutive rests for minimum productivity rule
+        self.consecutive_rests = 0
+        # For hysteresis and emergency adaptation
+        self.last_resource_level = 1.0
+        self.shock_history = deque(maxlen=20)
+        self.adaptive_emergency = AdaptiveEmergency()
+        
+    def update_metacognition(self, predicted_tensor, actual_tensor, agent_reward=None):
         """
         Compare imagination with reality and update doubt level.
         High error → High doubt → Enter caution mode.
+        Also tracks recent failures to boost protective doubt.
         """
         # Calculate L1 loss (absolute error) between imagination and reality
         error = torch.abs(predicted_tensor - actual_tensor).mean().item()
         
-        # Update doubt using a moving average (Leaky Integrator)
-        # High error = High doubt
-        old_doubt = self.self_state.doubt_t
-        self.self_state.doubt_t = 0.7 * old_doubt + 0.3 * error
+        # Track recent failures (negative rewards indicate problems)
+        if agent_reward is not None:
+            # Count as failure ONLY if reward is negative (genuine bad outcome)
+            # Zero rewards from REST/REPAIR are NOT failures
+            if agent_reward < 0:  # Changed from 0.1 to 0 - only count true failures
+                self.recent_failures.append(1)
+            else:
+                self.recent_failures.append(0)
+        else:
+            self.recent_failures.append(0)
         
-        # If predictions are accurate, gradually reduce doubt
-        if error < 0.05:
+        # Update doubt using a moving average (Leaky Integrator)
+        # Clip maximum doubt increase per step to avoid explosive spikes
+        old_doubt = self.self_state.doubt_t
+        max_doubt_increase = 0.15
+        proposed = 0.7 * old_doubt + 0.3 * error
+        self.self_state.doubt_t = min(old_doubt + max_doubt_increase, proposed)
+        
+        # BOOST doubt if we've had recent failures (adaptive response)
+        recent_failure_rate = np.mean(list(self.recent_failures)) if len(self.recent_failures) > 0 else 0
+        if recent_failure_rate > 0.6:  # Raised from 0.4 - require 60% failures to trigger boost
+            failure_boost = recent_failure_rate * 0.1 * self.failure_boost_multiplier
+            self.self_state.doubt_t = min(1.0, self.self_state.doubt_t + failure_boost)
+        
+        # If predictions are accurate AND no recent failures, gradually reduce doubt
+        if error < 0.05 and recent_failure_rate < 0.2:
             self.self_state.doubt_t *= self.doubt_decay
         
         # Check if we need to enter or exit caution mode
@@ -561,109 +646,163 @@ class MetacognitiveSelfAgent(ProactiveSelfReferentialAgent):
         effective_beta += doubt_boost
         
         return min(2.5, effective_beta)
-    
+
     def compute_utility(self, external_reward, self_state: SelfState):
-        """Compute composite utility with doubt penalty"""
-        # Normalize reward
-        normalized_reward = external_reward / 2.0
-        
-        # Get effective beta (includes doubt)
+        """Less-punitive expert calibration: keeps gradient for learning.
+
+        Scaled reward has slightly more influence; penalties are linear and
+        encourage building a safety buffer rather than making everything
+        look hopeless when low.
+        """
         effective_beta = self.compute_effective_beta(self_state)
-        
-        # Self-cost with enhanced doubt penalty
-        cost_self = (
-            0.35 * self_state.d_t +
-            0.25 * (1.0 - self_state.r_t) +
-            0.15 * self_state.x_t +
-            0.25 * self_state.doubt_t  # Doubt as cognitive cost
-        )
-        
-        # Self-preservation factor
-        preservation = (
-            0.25 * self_state.g_t +
-            0.2 * self_state.c_t +
-            0.2 * (1.0 - self_state.d_t) +
-            0.2 * self_state.r_t +
-            0.15 * (1.0 - self_state.doubt_t)  # Low doubt helps preservation
-        )
-        
-        # Composite utility
-        utility = normalized_reward - cost_self + (effective_beta * preservation)
-        
+
+        # Slightly more influence from external reward so learning signal remains
+        scaled_reward = external_reward * 0.2
+
+        # Linear resource penalty (encourage buffer to 0.6)
+        resource_penalty = 0.0
+        if self_state.r_t < 0.6:
+            resource_penalty = (0.6 - self_state.r_t) * 2.0
+
+        # Linear degradation penalty
+        degradation_penalty = 0.0
+        if self_state.d_t > 0.5:
+            degradation_penalty = (self_state.d_t - 0.5) * 1.5
+
+        # Strong survival bonus to make buffer building attractive
+        survival_bonus = 0.0
+        if self_state.r_t > 0.7 and self_state.d_t < 0.3:
+            survival_bonus = 4.0
+
+        utility = scaled_reward - resource_penalty - degradation_penalty + survival_bonus
         return utility, effective_beta
     
     def imagine_futures(self, observation, current_state: SelfState):
-        """Imagine possible futures with doubt-aware adjustments"""
+        """Imagine possible futures under expert-mode paranoia.
+
+        Uses `evaluate_expert_action` to apply heavy penalties to wasteful
+        repairs or risky work that would trigger a poverty trap.
+        """
         action_utilities = []
-        imagined_states = []
-        
+
         for action_idx in range(self.action_dim):
-            # Predict next state
+            # 1. Get standard imagined state prediction
             imagined_state = self.predict_next_state(observation, current_state, action_idx)
-            imagined_states.append(imagined_state)
-            
-            # Compute utility of imagined state
+
+            # 2. Apply EXPERT ECONOMIC FILTER
+            pred_r, expert_verdict = self.evaluate_expert_action(
+                action_idx, current_state.r_t, current_state.d_t
+            )
+
+            # 3. Start with base utility
             utility, _ = self.compute_utility(0, imagined_state)
-            
-            # Apply doubt-based adjustments
-            if self.in_caution_mode:
-                # In caution mode, heavily penalize risky actions
-                if action_idx >= 2:  # WORK actions
-                    penalty = current_state.doubt_t * 0.8
-                    utility -= penalty
-                    
-                    # Extra penalty for high-intensity work in high doubt
-                    if action_idx == 2:  # High intensity
-                        utility -= 0.3
-            else:
-                # Normal penalty for high-load actions
-                if action_idx >= 2:  # WORK actions
-                    utility -= imagined_state.x_t * 0.05
-            
+
+            # 4. Apply expert penalties based on economic reality
+            if expert_verdict == "wasteful":
+                utility -= 2.0
+            elif expert_verdict == "risky":
+                utility -= 1.5
+            elif expert_verdict == "cant_afford":
+                utility -= 3.0
+            elif expert_verdict == "productive" and current_state.r_t > 0.7:
+                utility += 0.5
+
             action_utilities.append(utility)
-        
-        # If in caution mode, restrict to safe actions
+
+        # If in caution mode, severely restrict allowed actions
         if self.in_caution_mode:
-            # Only consider safe actions
-            safe_utilities = [action_utilities[i] for i in self.safe_actions]
-            best_safe_idx = np.argmax(safe_utilities)
-            best_action_idx = self.safe_actions[best_safe_idx]
+            allowable = [0]
+            if current_state.d_t > 0.75 and current_state.r_t > 0.7:
+                allowable.append(1)
+            # pick best among allowable
+            allowed_utils = [action_utilities[i] for i in allowable]
+            best_idx = np.argmax(allowed_utils)
+            best_action_idx = allowable[best_idx]
         else:
-            # Consider all actions
-            best_action_idx = np.argmax(action_utilities)
-        
-        return action_utilities, best_action_idx, imagined_states
+            best_action_idx = int(np.argmax(action_utilities))
+
+        return action_utilities, best_action_idx, []
     
     def select_action(self, observation, current_state: SelfState, explore=True):
         """Select action with doubt-aware exploration"""
-        
-        # Adjust exploration based on doubt
-        # High doubt → more exploration (epistemic foraging)
-        doubt_adjusted_exploration = self.exploration_rate * (1.0 + current_state.doubt_t * 2)
-        
-        # Epsilon-greedy exploration with doubt adjustment
-        if explore and random.random() < min(0.8, doubt_adjusted_exploration):
-            # In caution mode, only explore safe actions
-            if self.in_caution_mode:
-                action_idx = random.choice(self.safe_actions)
+        # === SMART EMERGENCY SYSTEM ===
+        sustainable = self.calculate_sustainable_work_cycle(current_state.r_t, current_state.d_t)
+        ae = self.adaptive_emergency
+
+        # EXPERT MODE: Never work below 0.6 resources (paranoid conservation)
+        if current_state.r_t < 0.6:
+            # Only exception: critical degradation and we have a modest buffer
+            if current_state.d_t > 0.75 and current_state.r_t > 0.4:
+                print(f"⚠️  EXPERT_CRITICAL_REPAIR (R={current_state.r_t:.2f}, D={current_state.d_t:.2f})")
+                return 1, torch.tensor(0.0)
             else:
-                # Weighted random: higher doubt → bias toward safe actions
-                if current_state.doubt_t > 0.1:
-                    weights = [0.3, 0.3] + [0.4/3] * 3  # Bias toward REST/REPAIR
+                print(f"⚠️  EXPERT_BUFFER_BUILD_REST (R={current_state.r_t:.2f})")
+                return 0, torch.tensor(0.0)
+
+        # Hysteresis-aware emergency: only trigger if resources dropped compared to last check
+        if current_state.r_t < ae.emergency_threshold and current_state.r_t < self.last_resource_level:
+            if current_state.d_t < 0.3:
+                print(f"⚠️  SMART_EMERGENCY_REST (R={current_state.r_t:.2f}, D={current_state.d_t:.2f})")
+                return 0, torch.tensor(0.0)
+            else:
+                # If degradation is high, prefer repair when affordable
+                if current_state.r_t > 0.3:
+                    print(f"⚠️  SMART_EMERGENCY_REPAIR (R={current_state.r_t:.2f}, D={current_state.d_t:.2f})")
+                    return 1, torch.tensor(0.0)
+                else:
+                    print(f"⚠️  SMART_EMERGENCY_REST (low resources & high degradation)")
+                    return 0, torch.tensor(0.0)
+
+        # Recovery zone: 0.25 <= r < 0.4 -> try low-intensity work if sustainable
+        if 0.25 <= current_state.r_t < ae.work_allowed_threshold:
+            if sustainable:
+                action_idx = 4  # WORK_LOW
+                print(f"⚠️  RECOVERY_WORK_LOW (R={current_state.r_t:.2f})")
+                obs_tensor = observation.unsqueeze(0)
+                state_tensor = current_state.to_tensor().unsqueeze(0)
+                with torch.no_grad():
+                    action_probs, _ = self.actor_critic(obs_tensor, state_tensor)
+                log_prob = torch.log(action_probs[0, action_idx])
+                return action_idx, log_prob
+            else:
+                print(f"⚠️  RECOVERY_REST (R={current_state.r_t:.2f})")
+                return 0, torch.tensor(0.0)
+
+        # Enforce minimum productivity but with safer thresholds
+        min_prod = self.ensure_minimum_productivity(self.consecutive_rests, current_state.r_t)
+        if min_prod is not None:
+            #print(f"⚠️  MIN_PROD_OVERRIDE: forcing low-intensity work (consecutive_rests={self.consecutive_rests})")
+            action_idx = min_prod
+            obs_tensor = observation.unsqueeze(0)
+            state_tensor = current_state.to_tensor().unsqueeze(0)
+            with torch.no_grad():
+                action_probs, _ = self.actor_critic(obs_tensor, state_tensor)
+            log_prob = torch.log(action_probs[0, action_idx])
+            return action_idx, log_prob
+
+        # Normal operation: adjust exploration based on doubt
+        doubt_adjusted_exploration = self.exploration_rate * (1.0 + current_state.doubt_t * 2)
+
+        if explore and random.random() < min(0.8, doubt_adjusted_exploration):
+            if self.in_caution_mode:
+                safe_with_low_work = [0, 1, 4]
+                action_idx = random.choice(safe_with_low_work)
+            else:
+                if current_state.doubt_t > 0.08:
+                    weights = [0.35, 0.35] + [0.3/3] * 3
                     action_idx = random.choices(range(self.action_dim), weights=weights)[0]
                 else:
                     action_idx = random.randint(0, self.action_dim - 1)
         else:
-            # Proactive selection using imagination
             _, action_idx, _ = self.imagine_futures(observation, current_state)
-        
+
         # Get actor's probability for this action (for training)
         obs_tensor = observation.unsqueeze(0)
         state_tensor = current_state.to_tensor().unsqueeze(0)
         with torch.no_grad():
             action_probs, _ = self.actor_critic(obs_tensor, state_tensor)
         log_prob = torch.log(action_probs[0, action_idx])
-        
+
         return action_idx, log_prob
     
     def update_self_state(self, actual_load, actual_resources, actual_degradation,
@@ -688,7 +827,152 @@ class MetacognitiveSelfAgent(ProactiveSelfReferentialAgent):
             recent_errors = list(self.prediction_errors)[-5:]
             avg_error = np.mean(recent_errors)
             self.self_state.g_t = max(0.1, min(0.99, 1.0 - avg_error * 2))
-    
+
+        # Update last resource level for hysteresis checks
+        self.last_resource_level = actual_resources
+
+    def adapt_learning_rates(self, survival_history):
+        """Reduce learning rates or increase exploration based on recent survival."""
+        recent_survival_rate = np.mean(survival_history[-20:]) if len(survival_history) >= 20 else 0.5
+        if recent_survival_rate > 0.8:
+            for pg in self.ac_optimizer.param_groups:
+                pg['lr'] = 1e-4
+            self.exploration_decay = 0.997
+        elif recent_survival_rate < 0.3:
+            for pg in self.ac_optimizer.param_groups:
+                pg['lr'] = 3e-4
+            self.exploration_rate = min(0.4, self.exploration_rate * 1.1)
+
+    def should_conserve_resources(self, current_r, current_d, doubt):
+        """Decide when to stop spending resources (conservation rules)."""
+        rules = [
+            (current_r < 0.4 and current_d > 0.5),
+            (current_r < 0.3),
+            (doubt > 0.05 and current_r < 0.5),
+            (len(self.recent_failures) > 2 and current_r < 0.6)
+        ]
+        return any(rules)
+
+    def ensure_minimum_productivity(self, consecutive_rests, current_r):
+        """Force some low-intensity work if agent has rested too long.
+
+        Fixed logic: only force low work when there's a safe buffer.
+        """
+        # ONLY force work if we have a RESOURCE BUFFER
+        if consecutive_rests > 4 and current_r > 0.7:
+            return 4  # WORK_LOW
+        elif consecutive_rests > 6 and current_r > 0.5:
+            return 4  # WORK_LOW
+        elif consecutive_rests > 8:
+            # Desperation - attempt low work even if buffer is small
+            return 4
+        return None
+
+    def calculate_sustainable_work_cycle(self, current_r, current_d):
+        """Expert mode only: 0.1 recovery, 1.5 work multiplier.
+
+        Be conservative: only allow work when well above buffer (R>0.6).
+        """
+        rest_recovery = 0.1 * (1.0 - current_d * 0.5)  # expert rest recovery
+        work_cost = 0.06  # WORK_LOW cost in expert (0.04 * 1.5)
+
+        # Never allow work that would drop us below 0.4
+        if current_r - work_cost < 0.4:
+            return False
+
+        # Don't risk it unless we have comfortable buffer
+        if current_r < 0.6:
+            return False
+
+        # Only allow work when buffer is comfortable and a simple recovery is possible
+        if rest_recovery - work_cost > 0:
+            return True
+
+        return False
+
+    def dynamic_work_intensity(self, current_r, current_d):
+        """Choose a safe work intensity (action index) based on buffer."""
+        if current_r > 0.8 and current_d < 0.2:
+            return 2  # WORK_HIGH
+        elif current_r > 0.6 and current_d < 0.4:
+            return 3  # WORK_MED
+        elif current_r > 0.4 and current_d < 0.6:
+            return 4  # WORK_LOW
+        else:
+            return 0  # REST
+
+    def should_accumulate_resources(self, current_r, current_d):
+        """Decide whether to build a resource buffer before shocks."""
+        recent_shocks = sum(self.shock_history[-5:]) if len(self.shock_history) >= 1 else 0
+        if recent_shocks > 2:
+            target_r = 0.8
+        elif current_d > 0.5:
+            target_r = 0.7
+        else:
+            target_r = 0.6
+        return current_r < target_r
+
+    def get_recovery_strategy(self, current_r, current_d):
+        """Choose best action to recover from low resources."""
+        # Danger zone - must prioritize REST
+        if current_r < 0.3:
+            # If degradation high but we have some resources, repair first
+            if current_d > 0.5 and current_r > 0.2:
+                return 1  # REPAIR first
+            else:
+                return 0  # REST first
+        elif 0.3 <= current_r < 0.6:
+            # Recovery zone - low work to build up when degradation manageable
+            if current_d < 0.4:
+                return 4  # WORK_LOW
+            else:
+                return 0  # REST
+        else:
+            return None  # Normal operation
+
+    def smart_emergency_override(self, current_r, current_d):
+        pass
+
+    def evaluate_expert_action(self, action_idx, current_r, current_d):
+        """Hardcoded expert economics: predicts if an action will trigger poverty trap."""
+        # Define expert costs (match environment multipliers conservatively)
+        REST_GAIN = 0.1 * (1.0 - current_d)
+        REPAIR_COST = 0.2
+        WORK_COSTS = {
+            2: 0.15,  # WORK_HIGH
+            3: 0.105, # WORK_MED
+            4: 0.06   # WORK_LOW
+        }
+
+        predicted_r = current_r
+
+        if action_idx == 0:  # REST
+            predicted_r = min(1.0, current_r + REST_GAIN)
+            return predicted_r, "safe_but_slow"
+
+        elif action_idx == 1:  # REPAIR
+            if current_r >= REPAIR_COST:
+                predicted_r = current_r - REPAIR_COST
+                if current_d > 0.7:
+                    return predicted_r, "necessary"
+                else:
+                    return predicted_r, "wasteful"
+            else:
+                return current_r, "cant_afford"
+
+        else:  # WORK
+            cost = WORK_COSTS.get(action_idx, 0.1)
+            if current_r >= cost:
+                predicted_r = current_r - cost
+                if predicted_r > 0.4:
+                    return predicted_r, "productive"
+                else:
+                    return predicted_r, "risky"
+            else:
+                return current_r, "overwork"
+
+        return predicted_r, "unknown"
+
     def get_metacognitive_status(self):
         """Get a string describing metacognitive state"""
         if self.in_caution_mode:
@@ -706,19 +990,18 @@ class Monitor:
     """Simple monitor for training visualization"""
     
     def __init__(self):
-        plt.ion()
-        self.fig, self.axs = plt.subplots(2, 3, figsize=(15, 10))
         self.history = {
             'resources': [], 'degradation': [], 'utility': [],
             'reward': [], 'exploration': [], 'doubt': [],
             'prediction_error': [], 'caution_mode': [], 'effective_beta': []
         }
-        
+        # Disable live plotting to prevent GUI hang
+        self.plot_enabled = False
+
     def update(self, agent, step, episode, total_episodes, status,
                utility, reward, effective_beta, action_idx, shocked=False,
                prediction_error=None, metacognitive_status=""):
         """Update monitor"""
-        
         # Update history
         self.history['resources'].append(agent.self_state.r_t)
         self.history['degradation'].append(agent.self_state.d_t)
@@ -729,111 +1012,75 @@ class Monitor:
         self.history['effective_beta'].append(effective_beta)
         if hasattr(agent, 'in_caution_mode'):
             self.history['caution_mode'].append(1.0 if agent.in_caution_mode else 0.0)
-        
         if prediction_error is not None:
             self.history['prediction_error'].append(prediction_error)
+
+
+# EmergencyPrioritySystem removed: unify emergency handling in select_action()
+
+
+class AdaptiveEmergency:
+    """Adaptive emergency thresholds with simple hysteresis."""
+    def __init__(self):
+        # EXPERT MODE THRESHOLDS
+        self.emergency_threshold = 0.4
+        self.work_allowed_threshold = 0.6
+        self.consecutive_emergencies = 0
+
+    def update_threshold(self, survived_last_emergency: bool):
+        if not survived_last_emergency:
+            self.consecutive_emergencies += 1
+            if self.consecutive_emergencies > 3:
+                self.emergency_threshold = min(0.4, self.emergency_threshold + 0.05)
+                self.work_allowed_threshold = min(0.5, self.work_allowed_threshold + 0.05)
+        else:
+            self.consecutive_emergencies = max(0, self.consecutive_emergencies - 1)
+
+
+class CatastropheMemory:
+    """Record death / near-death scenarios to warn agent in future."""
+    def __init__(self):
+        self.death_scenarios = deque(maxlen=20)
+        self.near_death_scenarios = deque(maxlen=20)
+
+    def record_failure(self, r_history, d_history, actions):
+        """Remember what led to death"""
+        if not r_history:
+            return
+        if r_history[-1] <= 0 or d_history[-1] >= 1.0:
+            scenario = {
+                'final_r': r_history[-1],
+                'final_d': d_history[-1],
+                'last_10_actions': actions[-10:],
+                'r_at_death': r_history[-5:],
+                'd_at_death': d_history[-5:]
+            }
+            self.death_scenarios.append(scenario)
+
+    def get_warning(self, current_r, current_d):
+        for scenario in self.death_scenarios:
+            try:
+                if len(scenario['r_at_death']) == 0:
+                    continue
+                if (abs(current_r - scenario['r_at_death'][0]) < 0.1 and
+                    abs(current_d - scenario['d_at_death'][0]) < 0.1):
+                    return "WARNING: Similar to past death scenario!"
+            except Exception:
+                continue
+        return None
         
-        # Update plots every 20 steps
-        if step % 20 == 0:
-            self._update_plots(step, episode, total_episodes, status, metacognitive_status, shocked)
-    
-    def _update_plots(self, step, episode, total_episodes, status, 
-                     metacognitive_status, shocked):
-        """Update all plots"""
-        for ax in self.axs.flat:
-            ax.clear()
-        
-        # Plot 1: Resources and Degradation
-        self.axs[0, 0].plot(self.history['resources'], 'g-', label='Resources', linewidth=2)
-        self.axs[0, 0].plot(self.history['degradation'], 'r--', label='Degradation', linewidth=2)
-        if 'caution_mode' in self.history and self.history['caution_mode']:
-            # Shade caution periods
-            caution = np.array(self.history['caution_mode'])
-            caution_periods = np.where(caution > 0.5)[0]
-            for period in caution_periods:
-                if period < len(self.history['resources']):
-                    self.axs[0, 0].axvspan(period-0.5, period+0.5, alpha=0.2, color='yellow')
-        self.axs[0, 0].set_ylim(-0.1, 1.1)
-        self.axs[0, 0].legend()
-        self.axs[0, 0].set_title('Resources vs Degradation')
-        self.axs[0, 0].grid(True, alpha=0.3)
-        
-        # Plot 2: Utility and Reward
-        self.axs[0, 1].plot(self.history['utility'], 'b-', label='Utility', linewidth=2)
-        self.axs[0, 1].plot(self.history['reward'], 'y--', label='Reward', alpha=0.7)
-        self.axs[0, 1].legend()
-        self.axs[0, 1].set_title('Utility and Reward')
-        self.axs[0, 1].grid(True, alpha=0.3)
-        
-        # Plot 3: Doubt and Effective Beta
-        if 'doubt' in self.history and len(self.history['doubt']) > 0:
-            self.axs[0, 2].plot(self.history['doubt'], 'purple', label='Doubt', linewidth=2)
-            if 'effective_beta' in self.history and len(self.history['effective_beta']) > 0:
-                self.axs[0, 2].plot(self.history['effective_beta'], 'orange', 
-                                  label='Effective β', alpha=0.7, linewidth=1.5)
-            self.axs[0, 2].legend()
-            self.axs[0, 2].set_title('Metacognition: Doubt and Anxiety')
-            self.axs[0, 2].grid(True, alpha=0.3)
-        
-        # Plot 4: Exploration Rate
-        self.axs[1, 0].plot(self.history['exploration'], 'brown', linewidth=2)
-        self.axs[1, 0].set_ylim(0, 0.5)
-        self.axs[1, 0].set_title('Exploration Rate')
-        self.axs[1, 0].grid(True, alpha=0.3)
-        
-        # Plot 5: Prediction Error
-        if 'prediction_error' in self.history and len(self.history['prediction_error']) > 0:
-            self.axs[1, 1].plot(self.history['prediction_error'], 'red', linewidth=2, alpha=0.7)
-            if len(self.history['prediction_error']) > 10:
-                # Add threshold line
-                self.axs[1, 1].axhline(y=0.15, color='orange', linestyle='--', 
-                                     alpha=0.5, label='Caution Threshold')
-                self.axs[1, 1].legend()
-            self.axs[1, 1].set_title('Prediction Error')
-            self.axs[1, 1].grid(True, alpha=0.3)
-        
-        # Plot 6: Recent Resources with Doubt Overlay
-        if len(self.history['resources']) > 10 and 'doubt' in self.history and len(self.history['doubt']) > 0:
-            recent_len = min(20, len(self.history['resources']))
-            recent_resources = self.history['resources'][-recent_len:]
-            recent_doubt = self.history['doubt'][-recent_len:]
-            
-            ax2 = self.axs[1, 2].twinx()
-            self.axs[1, 2].plot(range(recent_len), recent_resources, 'g-', 
-                              linewidth=2, label='Resources')
-            ax2.plot(range(recent_len), recent_doubt, 'purple', 
-                    linestyle='--', alpha=0.7, label='Doubt')
-            
-            self.axs[1, 2].set_ylabel('Resources', color='green')
-            ax2.set_ylabel('Doubt', color='purple')
-            self.axs[1, 2].set_title('Recent: Resources vs Doubt')
-            self.axs[1, 2].grid(True, alpha=0.3)
-            
-            # Combine legends
-            lines1, labels1 = self.axs[1, 2].get_legend_handles_labels()
-            lines2, labels2 = ax2.get_legend_handles_labels()
-            self.axs[1, 2].legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-        
-        # Status text
-        status_text = f"Episode {episode}/{total_episodes}, Step {step}: {status}"
-        if metacognitive_status:
-            status_text += f" | {metacognitive_status}"
-        if shocked:
-            status_text += " ⚡"
-        self.fig.suptitle(status_text, fontsize=14)
-        
-        plt.tight_layout()
-        plt.pause(0.01)
+
+
 
 # ============================================================================
 # TRAINING LOOP
 # ============================================================================
 
-def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
+def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5, difficulty="hard"):
     """Training loop for metacognitive agent"""
     
     print("=" * 70)
-    print("METACOGNITIVE SELF-REFERENTIAL AI TRAINING")
+    print(f"METACOGNITIVE SELF-REFERENTIAL AI TRAINING - {difficulty.upper()} MODE")
     print("=" * 70)
     print("\nKey features:")
     print("1. Imagination-based proactive decision making ✓")
@@ -844,8 +1091,11 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
     print("")
     
     # Initialize
-    env = HomeostasisEnv(obs_dim=obs_dim)
+    env = HomeostasisEnv(obs_dim=obs_dim, difficulty=difficulty)
     agent = MetacognitiveSelfAgent(obs_dim=obs_dim, action_dim=action_dim)
+    # Attach emergency responder and resource buffer
+    emergency = EmergencyResponse()
+    agent.resource_buffer = ResourceBuffer()
     monitor = Monitor()
     
     # Training statistics
@@ -862,6 +1112,9 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
         episode_utility = 0
         steps = 0
         caution_steps = 0
+        r_history = []
+        d_history = []
+        actions_history = []
         
         # Reset agent state
         agent.self_state = SelfState(
@@ -871,11 +1124,36 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
         agent.caution_mode_duration = 0
         
         while True:
-            # Select action
-            action_idx, log_prob = agent.select_action(obs, agent.self_state, explore=True)
+            # Emergency check before selecting action
+            forced_action = emergency.check_emergency(agent.self_state)
+            if forced_action is not None:
+                action_idx = forced_action
+                log_prob = torch.tensor(0.0)
+            else:
+                # Select action
+                action_idx, log_prob = agent.select_action(obs, agent.self_state, explore=True)
             
             # Execute action
             next_obs, reward, load, done, status, shocked = env.step(action_idx)
+
+            # record histories for catastrophe memory
+            r_history.append(env.r)
+            d_history.append(env.d)
+            actions_history.append(action_idx)
+            # record shock history for adaptive rules
+            try:
+                agent.shock_history.append(1 if shocked else 0)
+            except Exception:
+                pass
+
+            # Track consecutive rests for minimum productivity enforcement
+            try:
+                if action_idx == 0:
+                    agent.consecutive_rests += 1
+                else:
+                    agent.consecutive_rests = 0
+            except Exception:
+                pass
             
             # Predict next state
             predicted_state = agent.predict_next_state(obs, agent.self_state, action_idx)
@@ -888,7 +1166,7 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
             
             # Update metacognition (compare prediction with reality)
             doubt, prediction_error = agent.update_metacognition(
-                predicted_state.to_tensor(), actual_state_tensor
+                predicted_state.to_tensor(), actual_state_tensor, agent_reward=reward
             )
             
             # Update self-state with prediction error info
@@ -929,6 +1207,11 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
                 # Record survival
                 survived = 1 if env.r > 0 and env.d < 1.0 else 0
                 survival_history.append(survived)
+                # Record catastrophic scenarios
+                try:
+                    agent.catastrophe_memory.record_failure(r_history, d_history, actions_history)
+                except Exception:
+                    pass
                 
                 # Record caution percentage
                 caution_pct = (caution_steps / steps * 100) if steps > 0 else 0
@@ -940,6 +1223,11 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
         episode_utilities.append(episode_utility)
         survival_steps.append(steps)
         final_resources.append(env.r)
+        # Adapt learning rates based on recent survival history
+        try:
+            agent.adapt_learning_rates(survival_history)
+        except Exception:
+            pass
         
         # Print progress
         if (episode + 1) % 5 == 0:
@@ -991,9 +1279,33 @@ def train_metacognitive_agent(episodes=50, obs_dim=10, action_dim=5):
     
     # Plot results
     plot_results(episode_rewards, episode_utilities, survival_steps, final_resources, caution_mode_percentages)
-    
-    plt.ioff()
-    plt.show()
+    # Save summary to JSON for automated inspection
+    summary = {
+        'average_reward': float(np.mean(episode_rewards)),
+        'average_utility': float(np.mean(episode_utilities)),
+        'average_survival_steps': float(avg_survival_steps),
+        'overall_survival_rate': float(survival_rate),
+        'average_time_in_caution_pct': float(avg_caution),
+        'average_final_resources_survivors': float(avg_final_resources) if avg_final_resources is not None else None,
+        'final_agent_state': {
+            'resources': float(agent.self_state.r_t),
+            'degradation': float(agent.self_state.d_t),
+            'capability': float(agent.self_state.c_t),
+            'confidence': float(agent.self_state.g_t),
+            'doubt': float(agent.self_state.doubt_t),
+            'internal_load': float(agent.self_state.x_t),
+            'metacognitive_status': agent.get_metacognitive_status()
+        }
+    }
+    # Write summary including seed identifier if provided
+    seed_tag = os.environ.get('RUN_SEED', '42')
+    summary_fname = f"train_summary_{seed_tag}.json"
+    try:
+        with open(summary_fname, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2)
+        print(f"\n✓ Training summary written to '{summary_fname}'")
+    except Exception:
+        pass
     
     return agent
 
@@ -1069,7 +1381,9 @@ def plot_results(rewards, utilities, survival, resources, caution_pcts):
     
     plt.tight_layout()
     plt.savefig('metacognitive_training_results.png', dpi=150)
-    plt.show()
+    print("\n✓ Training results saved to 'metacognitive_training_results.png'")
+    # Avoid opening a GUI window (blocks in headless/interactive sessions)
+    plt.close(fig)
 
 # ============================================================================
 # DEMONSTRATION
@@ -1202,10 +1516,12 @@ def demo_metacognitive_agent(agent, steps=30):
 # ============================================================================
 
 if __name__ == "__main__":
-    # Set random seeds
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+    # Set random seeds (allow override via RUN_SEED env var)
+    SEED = int(os.environ.get('RUN_SEED', '42'))
+    print(f"Using RUN_SEED={SEED}")
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
+    random.seed(SEED)
     
     print("\n" + "=" * 70)
     print("METACOGNITIVE SELF-REFERENTIAL AI")
@@ -1221,16 +1537,18 @@ if __name__ == "__main__":
     # Configuration
     OBS_DIM = 10
     ACTION_DIM = 5
-    EPISODES = 30
+    EPISODES = 200
+    DIFFICULTY = "expert"  # Options: "normal", "hard", "expert"
     RUN_DEMO = True
     
     try:
         # Train metacognitive agent
-        print(f"Training metacognitive agent for {EPISODES} episodes...\n")
+        print(f"Training metacognitive agent for {EPISODES} episodes (Difficulty: {DIFFICULTY})...\n")
         trained_agent = train_metacognitive_agent(
             episodes=EPISODES,
             obs_dim=OBS_DIM,
-            action_dim=ACTION_DIM
+            action_dim=ACTION_DIM,
+            difficulty=DIFFICULTY
         )
         
         # Run demonstration
