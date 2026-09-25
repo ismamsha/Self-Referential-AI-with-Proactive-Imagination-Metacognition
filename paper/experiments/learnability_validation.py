@@ -43,8 +43,12 @@ import numpy as np
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# In the developmental-self-model repository the benchmark lives in benchmarks/;
+# in the MSRA repository a verbatim snapshot sits next to this script.
+_CANDIDATES = [os.path.join(HERE, "..", "..", "benchmarks", "dsm_benchmark_b_v4.py"),
+               os.path.join(HERE, "dsm_benchmark_b_v4_snapshot.py")]
 spec = importlib.util.spec_from_file_location(
-    "v4", os.path.join(HERE, "dsm_benchmark_b_v4_snapshot.py"))
+    "v4", next(p for p in _CANDIDATES if os.path.exists(p)))
 v4 = importlib.util.module_from_spec(spec)
 import sys
 sys.modules["v4"] = v4

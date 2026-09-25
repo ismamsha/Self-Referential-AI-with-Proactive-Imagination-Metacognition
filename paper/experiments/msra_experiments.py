@@ -35,7 +35,10 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Import main.py with a stub for the missing `helpers` module
 # ---------------------------------------------------------------------------
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# Directory containing the original main.py (the MSRA repository root). Set MSRA_REPO
+# when running from another checkout, e.g. the developmental-self-model repository.
+REPO_ROOT = os.path.abspath(os.environ.get(
+    "MSRA_REPO", os.path.join(os.path.dirname(__file__), "..", "..")))
 RESULTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "results"))
 
 _helpers = types.ModuleType("helpers")
@@ -240,6 +243,7 @@ def run(variant, difficulty, seed, episodes, record_steps_every=0):
                 a, _ = agent.select_action(obs, agent.self_state, explore=True)
             sink.seek(0)
             sink.truncate()
+            a = int(a)
             next_obs, reward, load, done, status, shocked = env.step(a)
             actions[a] += 1
             shocks += int(shocked)
@@ -304,10 +308,13 @@ def run(variant, difficulty, seed, episodes, record_steps_every=0):
 
 def _job(args):
     variant, difficulty, seed, episodes, rec = args
+    fn = os.path.join(RESULTS_DIR, "raw", f"{variant}__{difficulty}__s{seed}.json")
+    if os.path.exists(fn):
+        return f"{variant:26s} {difficulty:7s} seed={seed} (exists, skipped)"
     out = run(variant, difficulty, seed, episodes, rec)
     fn = os.path.join(RESULTS_DIR, "raw", f"{variant}__{difficulty}__s{seed}.json")
     with open(fn, "w") as f:
-        json.dump(out, f)
+        json.dump(out, f, default=lambda o: o.item() if hasattr(o, "item") else str(o))
     surv = np.mean([e["survived"] for e in out["episodes"]])
     return f"{variant:26s} {difficulty:7s} seed={seed} surv={surv:.3f} ({out['wall']:.0f}s)"
 

@@ -69,7 +69,9 @@ hand-specified sparse associative learner (no evolution), we find that adding \e
 matters and adding \emph{units} does not: growth that imprints a new unit on each unrepresented pattern reached
 $58.6\pm0.6\pct$ with 24 average units, matching a fixed 128-unit learner ($58.6\pm0.3\pct$), whereas the same
 growth trigger with randomly wired units gave $50.5\pm0.0\pct$ (fixed-16: $50.5\pm0.2\pct$; cue-blind:
-$50.0\pct$; 3 seeds $\times$ 400 paired lives). However, the growth decisions in that result are driven by a
+$50.0\pct$; 3 seeds $\times$ 400 paired lives). A few evolved runs (1--2 seeds per configuration) show the same
+ordering at a higher level (imprint growth 67.1\pct, fixed-128 64.5\pct, random growth 54.8\pct), which we treat as
+suggestive. However, the growth decisions in that result are driven by a
 novelty gate, not by metacognition; and a pre-specified prospective test shows that the program's behavioural
 ``learnability'' signal tracks past progress ($r=0.50$--$0.58$) but does not forecast future progress (partial
 $r$ from $-0.086$ to $-0.004$ after controlling for recent accuracy; 6 runs). Our supported claim is therefore narrow: endogenous
@@ -162,7 +164,7 @@ isolated. \\
 \Hyp & A claim we believe but have not tested. \\
 \Pro & A design for an experiment that has not been run. \\
 \Rep & (Reported, not re-run.) A number reported in the project's research log that we could not re-execute for this paper (the V1--V3
-learners were run on a GPU; no result files were committed). These numbers are used only descriptively. \\
+learners were run on a GPU; no per-run result files were committed). These numbers are used only descriptively. \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -177,8 +179,9 @@ in the abstract and in the claims section to its source file.
 \paragraph{Materials.} The program's code lives in three branches of the project repository: the original agent
 (\texttt{main.py}); the learning-agent, hidden-fault, organism and ceiling experiments (branch
 \path{claude/research-opinion-ly94jb}, commit \texttt{d185ccf}); and Benchmark~B V1--V4 (branch
-\path{claude/quirky-wright-6hfp0i}, commit \texttt{26cc897}). All new analyses in this paper are in
-\path{paper/experiments/}.
+\path{claude/quirky-wright-6hfp0i}, commit \texttt{26cc897}), now maintained as the standalone repository
+\path{github.com/ismamsha/developmental-self-model}, which also holds the evolved V4 results and the research log
+(\path{docs/RESULTS.md}). All new analyses in this paper are in \path{paper/experiments/}.
 
 %=====================================================================
 \section{Related and convergent work}
@@ -590,7 +593,8 @@ Delay length & One recurrent step between instruction and response. & A short de
 
 \subsection{V1--V3: dense local learners fail to learn the mapping}
 \label{sec:v1v3}
-All numbers in this subsection are \Rep\ (project log; GPU runs; no committed result files).
+All numbers in this subsection are \Rep\ (research log \path{docs/RESULTS.md} and the project draft; GPU runs;
+no committed per-run result files).
 
 \paragraph{V1.} Random birth wiring, recurrent state, local plastic weights, self-model, doubt, a learnability
 estimate, and HOLD/GROW/PRUNE decisions with reserve neurons. With six actions (chance 16.7\pct), accuracy stayed at
@@ -615,9 +619,16 @@ per-phase baseline 49.7\pct; perfect-learner ceiling ${\approx}82\pct$. The with
 (30.3 $\to$ 38.5 $\to$ 44.2 $\to$ 51.7\pct) and dropped to 39.8\pct\ at the start of phase 2.
 \Neg\ $39.3\pct<49.7\pct$: the V3 learner did not demonstrate $(q,c)\mapsto a$ learning; its behaviour is
 consistent with learning a phase-dependent action prior that is overwritten when the task distribution
-changes. A V3 diagnostic (linear probe on response-time states) reportedly decoded task$\times$cue at
-${\approx}94\pct$ (\Rep, from the V4 design notes): the information was present but the dense local readout
-could not use it.
+changes.
+
+\paragraph{V3 diagnostics.} \Rep\ (hand-built rule, 200 lives; \path{docs/RESULTS.md}). A per-life ridge probe on
+response-time states decoded the \emph{cue} at 93.9\pct\ (baseline 24\pct) and the task$\times$cue conjunction at
+63.4\pct\ (baseline 8.9\pct), while the organism scored 37.6\pct\ against a 49.5\pct\ cue-blind baseline. Removing the
+delay (cue visible at response) raised accuracy only to 40.6--43.7\pct\ (probe ${\approx}98\pct$ / ${\approx}71\pct$);
+leaky units lowered it to 34.3\pct; a centered readout gave 40.2\pct. Interpretation: retention across the one-step
+delay is not the main bottleneck; the information is largely present, but dense reward-modulated updates of
+shared weights cannot bind 16 conjunctions from ${\approx}7$ exposures each without mutual overwriting. These
+diagnostics are single-configuration runs without seed statistics.
 
 \paragraph{Learnability in V3.} Behavioural learnability (a fast-minus-slow accuracy trend predicted from the
 organism's features) was reported to rise while accuracy improved (${\approx}{+}0.42$ at 51.7\pct\ accuracy) and fall
@@ -699,6 +710,39 @@ Dashed: cue-blind; dotted: chance. (c) Learnability validation (Section~\ref{sec
 The imprint rule is, in essence, a resource-allocating network \citep{platt1991resource} with a local
 three-factor readout: its success confirms an old idea in a new setting rather than establishing a new mechanism.
 
+\paragraph{Evolved genomes.} \Sug\ The repository also contains V4 runs in which ES tuned the genome (population 64,
+32 lives per genome, 100 generations; the 53-parameter genome without repair and gate genes). Table~\ref{tab:v4evo}
+lists every committed run. Evolution raised every configuration (fixed-16 from 50.5 to 54.2\pct, now 4.5 points above
+cue-blind), and the ordering of Table~\ref{tab:v4} is preserved: imprint growth (67.1\pct, 23.9 average units)
+exceeds fixed-128 (64.5\pct), random growth stays near fixed-16 (54.8\pct), and imprint accuracy \emph{rises} across
+phases (62.7 $\to$ 69.1\pct) where fixed networks decline (fixed-128: 70.4 $\to$ 60.6\pct). With one seed for every
+growth configuration, these are suggestive only: seed-to-seed spread in the two-seed rows is ${\le}0.9$ points, but a
+single evolutionary run can differ from another in ways the evaluation spread does not capture. Evolved
+\emph{full}, \emph{nolearn} and \emph{basic} are indistinguishable (67.0, 66.8, 67.1\pct), confirming that
+self-model signals are redundant in the standard task.
+
+\begin{table}[t]
+\centering\footnotesize\setlength{\tabcolsep}{4pt}
+\caption{V4, evolved genomes (ES, 100 generations), standard task. One row per committed run. Cue-blind
+49.7--49.8\pct; survival 99.7--100\pct\ in every run; random-growth units are the mean of the two seeds. Source: \texttt{results/v4\_standard/*\_seed*.json} in the developmental-self-model repository.}
+\label{tab:v4evo}
+\begin{tabular}{lcccc}
+\toprule
+Configuration (seeds) & Accuracy & Avg / final units & Phase 1 $\to$ 4 (seed 0) & Task 0, ph.\ 4\\
+\midrule
+Fixed-16 (0, 1) & 54.2 / 54.2 & 16 / 16 & 63.9 $\to$ 46.4 & 75.2 / 73.3\\
+Fixed-32 (0, 1) & 58.7 / 58.6 & 32 / 32 & 67.1 $\to$ 51.8 & 79.5 / 79.3\\
+Fixed-64 (0, 1) & 62.5 / 61.6 & 64 / 64 & 69.6 $\to$ 56.7 & 84.0 / 83.6\\
+Fixed-128 (0, 1) & 64.8 / 64.2 & 128 / 128 & 70.9 $\to$ 60.4 & 86.4 / 86.0\\
+Random growth (0, 1) & 55.0 / 54.6 & 38.7 / 62.8 & 62.2 $\to$ 49.8 & 57.7 / 59.5\\
+Imprint growth (0) & 67.1 & 23.9 / 29.6 & 62.7 $\to$ 69.1 & 85.7\\
+Full (0) & 67.0 & 23.9 / 29.6 & 62.6 $\to$ 68.7 & 85.6\\
+Full without learnability (0) & 66.8 & 23.9 / 29.5 & 62.5 $\to$ 68.6 & 84.9\\
+Full without self-model signals (0) & 67.1 & 23.7 / 29.4 & 62.9 $\to$ 68.9 & 85.4\\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Metacognition under ambiguous errors.}
 To create conditions in which an error is \emph{not} always a missing slot, V4.1 adds reward noise (15\pct\ of
 feedback flipped; fitness scores the true outcome) and a mid-life remapping of two tasks, plus a REPAIR action
@@ -732,6 +776,10 @@ the modulator together, the effect cannot yet be assigned to one lever; and beca
 by hand, this shows that the signal is \emph{usable}, not that evolution would discover its use.
 \Neg\ Again learnability contributes nothing (54.0 vs.\ 53.9\pct). Note also that all learners except the repairing
 ones score \emph{below chance} on remapped patterns: they keep executing the old mapping.
+\Neg\ The benefit depends on the condition. In a smaller per-condition check (\Rep; 40 lives $\times$ 3 seeds,
+\path{docs/RESULTS.md}) full $-$ basic was $+1.9$ (standard), $-2.0$ (noise only), $+5.2$ (reversal only) and $+2.6$
+points (noise + reversal): under noise alone, the hand-set repair policy fires on noise and hurts. Whether evolution
+tunes this away is untested.
 
 \subsection{Is the learnability signal a forecast? A pre-specified prospective test}
 \label{sec:learnability}
@@ -808,6 +856,9 @@ Doubt--$\beta$ correlation $R^2=0.89$ & $\beta$ is defined as a function of doub
 construction. & Removed. \\
 Phase portrait, shock-response and long-horizon figures & Not produced by any committed code. & Removed. \\
 Parameter counts: self-model 12{,}422, actor-critic 8{,}961 & Actual: 11{,}462 and 14{,}790. & Corrected. \\
+MSRA spends 4.4\pct\ of steps in caution mode (figure and preprint) & \path{main.py}'s own training loop
+gives 91.6\pct\ (normal) and 98.2\pct\ (hard) with the committed code and no-op stand-ins for the missing module. &
+Not reproduced; reported as such. \\
 Actor-critic ``policy'' & Trained but never selects actions; update can diverge to NaN. & Reported
 (Table~\ref{tab:msra-audit}). \\
 MRC: ``we prove'' the anchored gap stays bounded; ``feedback loop causes $w_t$ to rotate away'' & No proof was given;
@@ -840,7 +891,8 @@ change and is associated with more reliable evolution of successful controllers 
 $p=0.092$), although detection by itself did not improve survival; (ii) for lifetime structural growth, what
 matters is whether new capacity is addressable: with a hand-specified sparse associative learner, imprinting new
 units on unrepresented patterns matched a fixed network five times larger in average size, while equally
-triggered growth of randomly wired units gave no benefit; (iii) the growth decisions in that result are driven by
+triggered growth of randomly wired units gave no benefit (3 seeds, paired lives; single evolved runs show the same
+ordering at a higher level); (iii) the growth decisions in that result are driven by
 novelty, not by metacognitive estimates; a per-unit surprise signal becomes useful for repairing remapped
 associations when errors are ambiguous; and (iv) the agent's behavioural learning-progress signal tracks past
 progress but does not forecast future progress.}
@@ -884,11 +936,11 @@ Stopping: each experiment runs its pre-set budget; no early stopping on results.
 Exp. & Hypothesis & IV / DV / controls & Support / falsify & Failure modes\\
 \midrule\endfirsthead
 \toprule Exp. & Hypothesis & IV / DV / controls & Support / falsify & Failure modes\\ \midrule\endhead
-E1 Representation probe (V3 dense) & Task$\times$cue is linearly decodable at response time. & IV: size 16/32/64, delay on/off. DV: ridge-probe accuracy per life (held-out trials), measurement only. Controls: probe on shuffled labels; probe on birth-state network. 5 seeds. & High probe + low accuracy $\Rightarrow$ readout/credit bottleneck (reported ${\approx}94\pct$ supports). Low probe even without delay $\Rightarrow$ representation bottleneck. & Probe overfits (use held-out trials); decodable but not linearly separable by a local rule. \\
-E2 No-delay & Recurrent retention is not the main bottleneck. & IV: delay vs.\ cue visible at response. DV: accuracy, cue-blind margin. 5 seeds. & Large gain without delay $\Rightarrow$ retention bottleneck; small gain supports interference diagnosis. & Cue visibility adds input drive, not only memory; match input norms. \\
-E3 Leaky retention & A local leaky unit rescues delayed performance if retention matters. & IV: leak $r\in\{0,0.5,0.8\}$. DV: accuracy, probe accuracy. 5 seeds. & Improvement proportional to E2 gap. & Leak increases cross-trial interference. \\
+E1 Representation probe (V3 dense) \newline\emph{(partly done, 1 config.)} & Task$\times$cue is linearly decodable at response time. & IV: size 16/32/64, delay on/off. DV: ridge-probe accuracy per life (held-out trials), measurement only. Controls: probe on shuffled labels; probe on birth-state network. 5 seeds. & High probe + low accuracy $\Rightarrow$ readout/credit bottleneck (reported: cue 93.9\pct, task$\times$cue 63.4\pct). Low probe even without delay $\Rightarrow$ representation bottleneck. & Probe overfits (use held-out trials); decodable but not linearly separable by a local rule. \\
+E2 No-delay \newline\emph{(partly done)} & Recurrent retention is not the main bottleneck. & IV: delay vs.\ cue visible at response. DV: accuracy, cue-blind margin. 5 seeds. & Large gain without delay $\Rightarrow$ retention bottleneck; small gain supports interference diagnosis. & Cue visibility adds input drive, not only memory; match input norms. \\
+E3 Leaky retention \newline\emph{(partly done)} & A local leaky unit rescues delayed performance if retention matters. & IV: leak $r\in\{0,0.5,0.8\}$. DV: accuracy, probe accuracy. 5 seeds. & Improvement proportional to E2 gap. & Leak increases cross-trial interference. \\
 E4 Oracle learner (GRU, backprop) & The benchmark is learnable at 16--64 units with the available exposure. & (a) Meta-trained GRU (RL$^2$ style \citep{duan2016rl2}) over many lives, learning within life in activations; (b) tabular ideal learner. DV: accuracy vs.\ 80.4\pct\ ceiling, cue-blind margin. 5 seeds. & GRU at $\ge$60\pct\ with 32 units $\Rightarrow$ capacity/exposure are adequate and local learners are the bottleneck. GRU near cue-blind $\Rightarrow$ redesign benchmark. & Meta-training budget too small; report training curves to saturation. \\
-E5 Fast associative memory (no growth) & Sparse code + local readout beats cue-blind at fixed size. & Done in hand-built form (Table~\ref{tab:v4}). Remaining: evolve the genome (100 gens, 5 seeds). & Evolved fixed-32 $\ge$ cue-blind $+5$ points in all seeds. & Evolution degrades a good hand rule (compare to generation 0). \\
+E5 Fast associative memory (no growth) & Sparse code + local readout beats cue-blind at fixed size. & Done hand-built (Table~\ref{tab:v4}) and evolved with 2 seeds (Table~\ref{tab:v4evo}). Remaining: $\ge$5 seeds. & Evolved fixed-32 $\ge$ cue-blind $+5$ points in all seeds. & Evolution degrades a good hand rule (compare to generation 0). \\
 E6 Cue-blind baselines & Claimed mapping learners beat the strongest cue-blind learner. & Add an \emph{online} cue-blind learner that sees time and task but not cue; keep hindsight baseline. & Margin $>0$ over both, per seed. & Online baseline weaker than hindsight; report both. \\
 E7 Capacity scaling & Performance increases with fixed capacity. & Done for hand-built V4 (8--128 monotone). Repeat with evolved genomes and the V3 dense learner. & Monotone increase in $\ge$4 of 5 seeds. & Flat curve $\Rightarrow$ capacity is not the target; growth has nothing to fix. \\
 E8 Learnability forecast & A locally trained forecaster predicts future $\Delta A$. & IV: target = retrospective trend (current) vs.\ delayed realized $\Delta A$ (new). DV: S1--S3 of Section~\ref{sec:learnability}; calibration curve of $L$ vs.\ realized $\Delta A$; within-phase analysis. 5 seeds. & S2 and S3 pass in all seeds. Falsified if the delayed-target forecaster also has partial $r\le0$. & Predictability of $\Delta A$ is itself near zero (compute the ceiling with an offline regressor on the same features). \\
@@ -912,8 +964,8 @@ from phase or time alone; or a fixed memory system without metacognition achieve
         open-ended problems.
   \item Most comparisons use three seeds. Paired designs and small seed-to-seed variance make the V4 contrasts
         clear, but the organism and fault results remain statistically weak.
-  \item V1--V3 numbers are reported from logs; we could not re-execute them. V4 results use a hand-built genome;
-        the evolved V4 grid has not been run.
+  \item V1--V3 numbers are reported from logs; we could not re-execute them. The V4 results with seed statistics use a
+        hand-built genome; evolved V4 results exist for only 1--2 seeds per configuration.
   \item Growth in V3/V4 activates units from a pre-allocated pool; it reduces nothing in compute.
   \item Terms such as genome, doubt, anxiety, neurogenesis and neuromodulator are computational analogies, not
         biological claims.
@@ -944,11 +996,15 @@ and takes full responsibility for its content. Claude is not an author, in line 
 NeurIPS and ICML.
 
 \section*{Reproducibility}
-New analyses: \path{paper/experiments/} (\path{msra_experiments.py}, \path{learnability_validation.py},
-\path{mrc_toy.py}, \path{fig_v4.py}, and a verbatim snapshot of \path{dsm_benchmark_b_v4.py} from commit
-\texttt{26cc897}). Outputs: \path{paper/results/}. V4 tables: \texttt{python dsm\_benchmark\_b\_v4.py --mode hand
---device cpu --seeds 0,1,2 --eval-lives 400} (standard) and the V4.1 command in
-\path{paper/results/README.md}. Part~I results: branch \path{claude/research-opinion-ly94jb}.
+The paper, its analysis scripts and their outputs are in the \path{paper/} directory of
+\path{github.com/ismamsha/developmental-self-model}. New analyses: \path{paper/experiments/}
+(\path{learnability_validation.py}, \path{mrc_toy.py}, \path{fig_v4.py}, \path{summarize_msra.py}, and
+\path{msra_experiments.py}, which needs the original \path{main.py}; set \texttt{MSRA\_REPO} to a checkout of
+\path{github.com/ismamsha/Self-Referential-AI-with-Proactive-Imagination-Metacognition}). Outputs and the exact
+commands: \path{paper/results/README.md}. The V4 code is \path{benchmarks/dsm_benchmark_b_v4.py}, identical to
+commit \texttt{26cc897} of the MSRA repository apart from paths in its docstring. Evolved V4 runs and the research
+log are in the same repository. Part~I results (MSRA-L, hidden faults, organisms, ceiling): branch
+\path{claude/research-opinion-ly94jb} of the MSRA repository.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
@@ -971,6 +1027,9 @@ MSRA-L table & \path{results/summary.md} (research branch) \\
 Parameter counts 11{,}462 / 14{,}790 & counted from \texttt{main.py} modules \\
 V1--V3 numbers & project research log (draft of September 2026); not re-run \\
 V4 standard table & \path{paper/results/v4_standard/hand_comparison.json}, \path{v4_standard.txt} \\
+V4 evolved table & \path{results/v4_standard/*_seed*.json} (developmental-self-model repository) \\
+V3 diagnostics; V4.1 per-condition gaps & \path{docs/RESULTS.md} (developmental-self-model repository); not re-run \\
+\path{main.py} own training loop (91.6 / 98.2\pct\ caution) & \path{paper/results/main_py_crosscheck.txt} \\
 V4.1 table & \path{paper/results/v4_meta/hand_comparison.json}, \path{v4_meta.txt} \\
 GROW vs.\ HOLD pressure and next-occurrence accuracy & \path{growth_analysis} fields in the V4 JSONs \\
 Learnability S1--S3, event study & \path{paper/results/learnability_validation.json}, \texttt{.txt} \\
