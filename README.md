@@ -149,6 +149,74 @@ python fault_experiment.py --faults severe    # 5 agents x 3 seeds
 In the severe setting, only the metacognitive, oracle and fault-blind agents have been run
 so far.
 
+## 🧬 Evolved organisms
+
+`organism.py` moves the whole metacognitive loop, and its learning rule, inside one small
+network. Nothing is trained by backpropagation: evolution (OpenAI-ES) shapes an inherited
+genome over generations, and within each life the network rewires itself with rules the
+genome carries.
+
+- **Plastic connections:** each weight is `W + A × Hebb`, and `Hebb` changes during life by
+  a three-factor rule: presynaptic activity × postsynaptic activity × a neuromodulator.
+- **Self-model inside the network:** a readout predicts how resources and damage will
+  change after each action, and learns during life by the delta rule.
+- **Doubt:** a running average of that readout's prediction error, fed back as an input.
+- **Neuromodulator:** a unit that reads doubt and decides whether rewiring strengthens,
+  stops or reverses.
+- **Rules only:** the strictest version holds no weights at all. It is born with random
+  wiring and an empty self-model, and inherits only each neuron's learning rule
+  (161 numbers).
+
+Six organisms were evolved on the severe hidden faults: 400 generations, 3 seeds each.
+Full table: [`results/organism_severe/summary.md`](results/organism_severe/summary.md).
+
+| Organism | Runs that evolved to survive* | Survival, healthy | Survival, fault |
+|---|---|---|---|
+| Innate wiring | 1 of 3 | 38% | 26% |
+| + told the fault | 2 of 3 | 68% | 52% |
+| Plastic wiring, no doubt | 2 of 3 | 69% | 47% |
+| **+ self-model and doubt** | **3 of 3** | **100%** | **72%** |
+| **Full organism: doubt steers plasticity** | **3 of 3** | **100%** | **69%** |
+| Rules only (random wiring at birth) | 1 of 3 | 83% | 16% |
+
+\*Healthy survival above 90% on 600 test lives.
+
+- **Every organism with a self-model and doubt evolved successfully (6 of 6 runs);** the
+  others managed 5 of 9. Doubt seems to make evolution reliable, perhaps because prediction
+  errors give the network an informative signal about its own body. This is suggestive
+  rather than proven: with 3 runs per organism the difference is not statistically
+  significant (Fisher's exact test, p ≈ 0.09), and the doubt organisms also have larger
+  genomes.
+- **The rules-only organism can work.** One run went from random wiring to 98% healthy
+  survival within each life, using only inherited learning rules. The other two runs did not
+  get there in 400 generations.
+- **The full organism's neuromodulator barely reacts to faults.** Evolution did not make
+  doubt steer rewiring; the successful organisms use doubt as an input instead.
+
+### Why nothing beats about 72% on faults
+
+`survival_ceiling.py` uses dynamic programming over the known body dynamics to find the best
+survival any policy could reach once a fault strikes, even one that knows the fault
+instantly and meets it at full health:
+
+| Fault (severe setting) | Best possible survival | Best agents reach |
+|---|---|---|
+| Motor | 100% | ~100% |
+| Fragile body (3× shocks) | 72% | ~45% |
+
+All the headroom is in the fragile fault, where surviving means stopping work entirely.
+Every agent and organism keeps working a little, because the reward makes that worth the
+risk of dying. The remaining gap comes from what the organisms are rewarded for, not from
+missing information about the fault.
+
+```bash
+python organism.py --check                  # verify the vectorised environment (exact match)
+python organism.py --faults severe          # 6 organisms x 3 seeds, ~1.5 h on 4 cores
+python survival_ceiling.py --faults severe  # best possible survival, ~10 s
+```
+
+![Evolved organisms](results/organism_severe/organism_results.png)
+
 ## 🗺️ Interactive diagram
 
 [`docs/doubting_agent.html`](docs/doubting_agent.html) is an interactive diagram of the

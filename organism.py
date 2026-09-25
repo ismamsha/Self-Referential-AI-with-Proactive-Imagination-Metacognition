@@ -614,7 +614,7 @@ def write_report(faults, seeds):
     ax.set_xlabel("Generation", color=INK)
     ax.set_ylabel("Survival on validation lives (%)", color=INK)
     ax.set_title("Evolution", color=INK, fontsize=11)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2, frameon=False, fontsize=8)
+    handles, labels = ax.get_legend_handles_labels()
 
     ax = axes[1]
     names = [v for v in VARIANTS if load(faults, v, seeds)]
@@ -640,7 +640,7 @@ def write_report(faults, seeds):
     ax.set_ylim(-0.6, len(names) - 0.2)
     ax.set_xlabel("Survival on 600 test lives (%)", color=INK)
     ax.set_title("Survival with and without a hidden fault", color=INK, fontsize=11)
-    ax.legend(loc="lower left", frameon=False, fontsize=9)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=2, frameon=False, fontsize=9)
 
     ax = axes[2]
     x = np.arange(-BEFORE, AFTER)
@@ -657,7 +657,6 @@ def write_report(faults, seeds):
     ax.set_xlabel("Steps since the hidden fault began", color=INK)
     ax.set_ylabel("Neuromodulator m (+ strengthens, − reverses)", color=INK)
     ax.set_title("What the evolved neuromodulator does", color=INK, fontsize=11)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=1, frameon=False, fontsize=8)
 
     for ax in axes:
         ax.grid(True, color=GRID, lw=0.8)
@@ -667,9 +666,10 @@ def write_report(faults, seeds):
         for side in ("left", "bottom"):
             ax.spines[side].set_color(MUTED)
         ax.tick_params(colors=MUTED, labelsize=9)
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels), frameon=False, fontsize=9)
     fig.text(0.5, 0.01, f"{faults.capitalize()} faults, hard difficulty; means over {len(seeds)} seeds.",
              ha="center", fontsize=9, color=MUTED)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    fig.tight_layout(rect=(0, 0.03, 1, 0.93))
     fig.savefig(os.path.join(results_dir(faults), "organism_results.png"), dpi=150)
     plt.close(fig)
 
