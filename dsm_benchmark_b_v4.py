@@ -45,6 +45,29 @@ Structural modes (--structure)
   nolearn  : full, controller does not see learnability
   basic    : full, controller sees no self-model / learnability signals
 
+Metacognition tests (v4.1)
+--------------------------
+In the standard task every error means "this pattern has no slot yet", so the
+novelty rule alone is near-optimal and self-model signals add nothing (evolved
+full = nolearn = basic ~ 67%). Two conditions make an error ambiguous:
+  --reward-noise p : feedback flipped with probability p (true accuracy scored)
+  --reversal       : the first --reversal-tasks tasks remap mid-life
+Levers that need the self-model to be used well:
+  REPAIR           : reset the slot that owns the current pattern
+  plasticity gate  : eta *= exp(gate . [|doubt|, slot doubt, learnability, 1])
+  slot doubt       : per-unit recent CONFIDENT-error rate (surprise), so a
+                     slot that is still learning is not mistaken for a broken one
+Ablations remove self-model inputs from growth, repair, gate and modulator
+(basic: all; nolearn: learnability only).
+
+Hand-built check (480 steps, rehearsal 0.5, noise 0.15 + reversal, 200 lives):
+    fixed-128        48.6%   remapped patterns 15.7%
+    full-16          53.7%   remapped patterns 29.4%
+    basic-16         52.0%   remapped patterns 12.1%  (cannot find broken slots)
+    nolearn-16 = full-16 (the useful signal is slot doubt, not learnability)
+
+    bash run_v4_meta_grid.sh
+
 Quick start
 -----------
 1) Hand-built comparison (no evolution, minutes on a GPU):
@@ -94,6 +117,11 @@ class Config:
     cue_gain: float = 2.0
     no_delay: bool = False           # diagnostic only
 
+    # Conditions that make "an error" ambiguous (metacognition tests)
+    reward_noise: float = 0.0        # P(feedback flipped); true accuracy is scored
+    reversal: bool = False           # tasks < reversal_tasks remap mid-life
+    reversal_tasks: int = 1
+
     # Sparse representation
     pool: int = 128                  # maximum units
     initial_units: int = 16
@@ -112,6 +140,10 @@ class Config:
     # Hand-built starting genome
     init_eta: float = 0.0            # logit; rate = sigmoid(logit) (0.5)
     init_temperature: float = 0.3
+    init_repair_bias: float = -8.0   # repair off in the hand-built genome
+    init_repair_slot: float = 0.0    # weight on slot doubt
+    init_repair_wrong: float = 0.0   # weight on "wrong this trial"
+    init_gate_slot: float = 0.0      # plasticity gate weight on slot doubt
 
     # Evolution
     generations: int = 100
@@ -133,7 +165,13 @@ class Config:
     @property
     def run_name(self) -> str:
         name = f"{self.structure}-{self.initial_units}"
-        return name if self.metacognition else name + "-nometa"
+        if not self.metacognition:
+            name += "-nometa"
+        if self.reward_noise > 0:
+            name += f"-noise{self.reward_noise:g}"
+        if self.reversal:
+            name += "-rev"
+        return name
 
 
 # =====================================================================
@@ -201,6 +239,18 @@ class Scenarios:
         self.structure_u = torch.rand(n, cfg.steps, generator=gen, device=device)
         self.action_u = torch.rand(n, cfg.steps, generator=gen, device=device)
 
+        # Drawn last so earlier random streams are unchanged.
+        self.noise_u = torch.rand(n, cfg.steps, generator=gen, device=device)
+        self.reversal_step = torch.randint(
+            cfg.steps // 2, max(cfg.steps // 2 + 1, (3 * cfg.steps) // 4), (n,),
+            generator=gen, device=device)
+        shift = torch.randint(1, cfg.n_actions, self.mapping.shape,
+                              generator=gen, device=device)
+        self.mapping_rev = self.mapping.clone()
+        rt = cfg.reversal_tasks
+        self.mapping_rev[:, :rt] = (self.mapping[:, :rt] + shift[:, :rt]) % cfg.n_actions
+        self.repair_u = torch.rand(n, cfg.steps, generator=gen, device=device)
+
         self.birth_seed = seed + 917_381
 
 
@@ -233,6 +283,15 @@ class BenchmarkB:
         self.shock_u = scenarios.shock_u.repeat(population, 1)
         self.structure_u = scenarios.structure_u.repeat(population, 1)
         self.action_u = scenarios.action_u.repeat(population, 1)
+        self.noise_u = scenarios.noise_u.repeat(population, 1)
+        self.repair_u = scenarios.repair_u.repeat(population, 1)
+        self.reversal_step = scenarios.reversal_step.repeat(population)
+        self.mapping_rev = scenarios.mapping_rev.repeat(population, 1, 1)
+        self.last_true_task_reward = torch.zeros(self.batch, device=device)
+        self.current_reversed = torch.zeros(self.batch, dtype=torch.bool, device=device)
+        # Accuracy on remapped patterns after the reversal.
+        self.reversed_correct = torch.zeros(self.batch, device=device)
+        self.reversed_responses = torch.zeros(self.batch, device=device)
 
         # Energy economy was tuned for 240 steps; keep it balanced for longer
         # lives so correct play can always survive.
@@ -302,6 +361,14 @@ class BenchmarkB:
             self.current_target = self.mapping[
                 self.rows, self.current_task, self.current_cue
             ]
+            if self.cfg.reversal:
+                self.current_reversed = (
+                    (t >= self.reversal_step)
+                    & (self.current_task < self.cfg.reversal_tasks))
+                self.current_target = torch.where(
+                    self.current_reversed,
+                    self.mapping_rev[self.rows, self.current_task, self.current_cue],
+                    self.current_target)
             task_onehot = self.cfg.cue_gain * F.one_hot(
                 self.current_task, self.cfg.max_tasks
             ).float()
@@ -371,12 +438,22 @@ class BenchmarkB:
             self.task_responses[self.rows, self.current_task, phase] += live_f
             self.target_count[self.rows, phase, self.current_target] += live_f
 
+            self.reversed_correct += (correct & self.current_reversed).float()
+            self.reversed_responses += (live & self.current_reversed).float()
+
             task_reward = torch.where(
                 correct, torch.ones_like(reward), torch.full_like(reward, -0.20)
             )
+            # Fitness uses the true outcome; the organism perceives feedback
+            # that is flipped with probability reward_noise.
             reward = torch.where(live, task_reward, reward)
+            flipped = self.noise_u[:, t] < self.cfg.reward_noise
+            perceived = torch.where(
+                correct ^ flipped, torch.ones_like(reward), torch.full_like(reward, -0.20))
+            self.last_true_task_reward = torch.where(
+                live, task_reward, self.last_true_task_reward)
             self.last_task_reward = torch.where(
-                live, task_reward, self.last_task_reward
+                live, perceived, self.last_task_reward
             )
 
             action_scale = action.float() / max(1, self.cfg.n_actions - 1)
@@ -439,9 +516,13 @@ class BenchmarkB:
 # Structural controller features (index -> meaning):
 #  0 |doubt|, 1 self-model error EMA, 2 task error, 3 learnability,
 #  4 capacity pressure, 5 wrong this trial, 6 novelty of the pattern,
-#  7 active fraction, 8 recent accuracy, 9 bias
-STRUCT_FEATURES = 10
-F_PRESSURE, F_WRONG, F_BIAS = 4, 5, 9
+#  7 active fraction, 8 recent accuracy, 9 slot doubt (recent confident-
+#  error rate of the unit that owns this pattern), 10 bias
+STRUCT_FEATURES = 11
+F_PRESSURE, F_WRONG, F_SLOT, F_BIAS = 4, 5, 9, 10
+
+# Self-model signals removed by the ablations (structure, gate, modulator).
+SELF_MODEL_FEATURES = (0, 1, 3, 4, F_SLOT)
 
 
 def structure_mask(mode: str) -> List[float]:
@@ -449,9 +530,27 @@ def structure_mask(mode: str) -> List[float]:
     if mode == "nolearn":
         mask[3] = 0.0
     elif mode == "basic":
-        for i in (0, 1, 3, 4):
+        for i in SELF_MODEL_FEATURES:
             mask[i] = 0.0
     return mask
+
+
+def gate_mask(mode: str) -> List[float]:
+    # Plasticity gate inputs: |doubt|, slot doubt, learnability, bias.
+    if mode == "basic":
+        return [0.0, 0.0, 0.0, 1.0]
+    if mode == "nolearn":
+        return [1.0, 1.0, 0.0, 1.0]
+    return [1.0, 1.0, 1.0, 1.0]
+
+
+def modulator_mask(mode: str, metacognition: bool) -> List[float]:
+    # Modulator inputs: doubt(3), |doubt|(3), RPE, learnability, bias.
+    if not metacognition or mode == "basic":
+        return [0, 0, 0, 0, 0, 0, 1, 0, 1]
+    if mode == "nolearn":
+        return [1, 1, 1, 1, 1, 1, 1, 0, 1]
+    return [1] * 9
 
 
 def genome_spec(cfg: Config) -> List[Tuple[str, Tuple[int, ...]]]:
@@ -468,6 +567,10 @@ def genome_spec(cfg: Config) -> List[Tuple[str, Tuple[int, ...]]]:
         ("eta_learnability", (1,)),
         ("grow", (STRUCT_FEATURES,)),
         ("prune", (STRUCT_FEATURES,)),
+        # REPAIR: reset the unit that owns this pattern so it can relearn.
+        ("repair", (STRUCT_FEATURES,)),
+        # Meta-plasticity: eta *= exp(gate . [|doubt|, slot doubt, learn, 1]).
+        ("plasticity_gate", (4,)),
     ]
 
 
@@ -501,6 +604,12 @@ def initial_genome(cfg: Config, device: torch.device, seed: int) -> torch.Tensor
             value[F_PRESSURE] = 4.0
         elif name == "prune":
             value[F_BIAS] = -4.0                # rare until evolution says so
+        elif name == "repair":
+            value[F_BIAS] = cfg.init_repair_bias
+            value[F_SLOT] = cfg.init_repair_slot
+            value[F_WRONG] = cfg.init_repair_wrong
+        elif name == "plasticity_gate":
+            value[1] = cfg.init_gate_slot
         parts.append(np.asarray(value, dtype=np.float64).reshape(-1))
     return torch.tensor(np.concatenate(parts).astype(np.float32), device=device)
 
@@ -559,6 +668,10 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
     x_instr = torch.zeros(batch, n_obs, device=device)
     usage = torch.zeros(batch, Pn, device=device)
     reward_baseline = torch.zeros(batch, device=device)
+    # Per-unit self-model: recent (perceived) error rate of each unit's
+    # association — how much the organism should trust that slot.
+    slot_doubt = torch.zeros(batch, Pn, device=device)
+    repair_total = torch.zeros(batch, device=device)
 
     SELF_OUT = 3
     feature_dim = Pn + n_input
@@ -590,8 +703,9 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
 
     rows = torch.arange(batch, device=device)
     ones = torch.ones(batch, 1, device=device)
-    meta_off = torch.tensor([0, 0, 0, 0, 0, 0, 1, 0, 1], dtype=torch.float32,
-                            device=device)
+    mod_mask = torch.tensor(modulator_mask(cfg.structure, cfg.metacognition),
+                            dtype=torch.float32, device=device)
+    g_mask = torch.tensor(gate_mask(cfg.structure), device=device)
 
     rec: Optional[Dict] = None
     if record:
@@ -640,8 +754,12 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
         total_reward += reward
         lived_f = lived.float()
 
+        # The self-model only sees perceived (possibly noisy) feedback.
+        perceived = reward
+        if not is_instruction:
+            perceived = reward + (env.last_task_reward - env.last_true_task_reward) * lived_f
         real = torch.stack([env.energy - energy_before,
-                            env.damage - damage_before, reward], dim=1)
+                            env.damage - damage_before, perceived], dim=1)
         error = (real - predicted) * lived_f[:, None]
         for ch in range(SELF_OUT):
             self_model[rows, :, ch * A + action] += (
@@ -674,23 +792,37 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
                 lived, 0.9 * reward_baseline + 0.1 * task_reward, reward_baseline)
             mod_input = torch.cat([doubt, doubt.abs(), rpe[:, None],
                                    learnability_signal[:, None], ones], dim=1)
-            if not cfg.metacognition:
-                mod_input = mod_input * meta_off
+            mod_input = mod_input * mod_mask
             modulator = torch.tanh((mod_input * g["modulator"]).sum(dim=1)) * lived_f
 
+            wrong = lived & (task_reward < 0)
+            slot_now = (code * slot_doubt).sum(dim=1) / code.sum(dim=1).clamp(min=1.0)
+
             if cfg.plasticity:
+                gate_in = torch.cat([doubt.norm(dim=1, keepdim=True), slot_now[:, None],
+                                     learnability_signal[:, None], ones], dim=1) * g_mask
+                eta_eff = eta * torch.exp(torch.clamp(
+                    (gate_in * g["plasticity_gate"]).sum(dim=1), -2.0, 2.0))
                 post = F.one_hot(action, A).float() - policy
                 dW = local_rule(g["rule_out"], code, post) * active[:, :, None]
-                W += (eta * modulator)[:, None, None] * dW
+                W += (eta_eff * modulator)[:, None, None] * dW
                 W.clamp_(-3.0, 3.0)
             usage = 0.98 * usage + 0.02 * code
+            # Surprise = an error the slot was confident it would not make
+            # (confidence = policy probability of the chosen action). Errors
+            # while a slot is still learning count little; a confident slot
+            # that starts failing (e.g. after a reversal) counts a lot.
+            confidence = policy[rows, action]
+            surprise = wrong.float() * confidence
+            slot_doubt = torch.where((code > 0) & lived[:, None],
+                                     0.7 * slot_doubt + 0.3 * surprise[:, None],
+                                     slot_doubt)
 
             # ---------------- development ----------------
             task_error = 1.0 - acc_slow
             learn_p = (learnability_signal if cfg.structure not in ("nolearn", "basic")
                        else torch.zeros_like(learnability_signal))
             pressure = task_error * (1.0 - learn_p) / 2.0
-            wrong = lived & (task_reward < 0)
 
             v = x_instr / x_instr.norm(dim=1, keepdim=True).clamp(min=1e-6)
             match = torch.einsum("bi,bij->bj", v, W_exp).masked_fill(~active, -1e9
@@ -701,7 +833,8 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
                 doubt.norm(dim=1, keepdim=True), error_ema[:, None],
                 task_error[:, None], learnability_signal[:, None], pressure[:, None],
                 wrong.float()[:, None], novelty[:, None],
-                (active.sum(dim=1).float() / Pn)[:, None], acc_fast[:, None], ones,
+                (active.sum(dim=1).float() / Pn)[:, None], acc_fast[:, None],
+                slot_now[:, None], ones,
             ], dim=1) * s_mask
 
             grow = torch.zeros_like(lived)
@@ -717,10 +850,22 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
                     active[rr, cc] = True
                     W[rr, cc] = 0.0
                     usage[rr, cc] = 0.0
+                    slot_doubt[rr, cc] = 0.0
                     if imprinting:
                         # New slot tuned to exactly this task+cue pattern.
                         W_exp[rr, :, cc] = cfg.imprint_gain * v[rr]
                     growth_events[rr] = 1.0
+
+                # REPAIR: the pattern already has a slot but the organism
+                # decides that slot is unreliable -> reset it to relearn.
+                owned = match >= cfg.novelty * cfg.imprint_gain if imprinting else lived
+                p_repair = torch.sigmoid((f * g["repair"]).sum(dim=1))
+                repair = lived & ~grow & owned & (env.repair_u[:, t] < p_repair)
+                if repair.any():
+                    reset = (code > 0) & repair[:, None]
+                    W = torch.where(reset[:, :, None], torch.zeros_like(W), W)
+                    slot_doubt = torch.where(reset, torch.zeros_like(slot_doubt), slot_doubt)
+                    repair_total += repair.float()
 
                 trial = t // 2
                 if pruning and t >= cfg.steps // 3 and trial % max(1, cfg.prune_interval // 2) == 0:
@@ -774,7 +919,7 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
     extra = torch.clamp(average_capacity - cfg.initial_units, min=0.0) / Pn
     fitness = (total_reward
                - cfg.complexity_cost * extra * (cfg.steps / 2)
-               - cfg.structural_change_cost * (grow_total + prune_total)
+               - cfg.structural_change_cost * (grow_total + prune_total + repair_total)
                + cfg.accuracy_weight * env.correct_total / env.response_total.clamp(min=1.0))
 
     P, L = population, lives
@@ -796,6 +941,9 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
         "target_count": env.target_count.reshape(P, L, T, A),
         "grow_total": grow_total.reshape(P, L),
         "prune_total": prune_total.reshape(P, L),
+        "repair_total": repair_total.reshape(P, L),
+        "reversed_correct": env.reversed_correct.reshape(P, L),
+        "reversed_responses": env.reversed_responses.reshape(P, L),
     }
     if rec is not None:
         result["record"] = rec
@@ -970,6 +1118,11 @@ def evaluate(theta: torch.Tensor, cfg: Config, device: torch.device, seed: int,
         "final_units": r["final_capacity"][0].mean().item(),
         "grow_events": r["grow_total"][0].mean().item(),
         "prune_events": r["prune_total"][0].mean().item(),
+        "repair_events": r["repair_total"][0].mean().item(),
+        "reversed_accuracy": (
+            (100.0 * r["reversed_correct"][0].sum()
+             / r["reversed_responses"][0].sum()).item()
+            if r["reversed_responses"][0].sum() > 0 else float("nan")),
     }
     for p in range(T):
         m[f"phase_{p+1}_accuracy"] = (100.0 * r["phase_correct"][0][:, p].sum()
@@ -1018,13 +1171,15 @@ def hand_mode(args: argparse.Namespace, device: torch.device) -> None:
     print(f"{base.max_tasks} tasks x {base.n_cues} cues x {base.n_actions} actions, "
           f"{base.steps} steps, k={base.k}, pool={base.pool}, faults p={base.fault_probability}, "
           f"{args.eval_lives} lives x seeds {seeds}")
+    print(f"reward noise {base.reward_noise}, reversal {base.reversal} "
+          f"(tasks < {base.reversal_tasks}), rehearsal {base.rehearsal_fraction}")
     print(f"chance {100.0 / base.n_actions:.1f}%  |  perfect-learner ceiling "
           f"{ceiling:.1f}% (seed {seeds[0]})")
     print("=" * 110)
     head = (f"{'config':18s} | {'acc':>11s} {'blind':>6s} {'margin':>7s} |"
             + "".join(f" {'P' + str(p + 1):>5s}" for p in range(base.max_tasks))
             + f" | {'t0 end':>6s} | {'avg u':>6s} {'final':>6s} {'grow':>5s}"
-            f" | {'next-acc grow/hold':>18s}")
+            f" | {'rev':>5s} {'repair':>6s}")
     print(head)
 
     def row(label: str, runs: List[Dict]) -> None:
@@ -1033,18 +1188,15 @@ def hand_mode(args: argparse.Namespace, device: torch.device) -> None:
 
         acc = np.array([r["accuracy"] for r in runs])
         sd = acc.std(ddof=1) if len(acc) > 1 else 0.0
-        ga = [r.get("growth_analysis", {}) for r in runs]
-        g_acc = [x["next_same_pattern_acc_after_grow"] for x in ga
-                 if "next_same_pattern_acc_after_grow" in x]
-        h_acc = [x["next_same_pattern_acc_after_hold"] for x in ga
-                 if "next_same_pattern_acc_after_hold" in x]
-        nxt = f"{np.mean(g_acc):5.1f}/{np.mean(h_acc):5.1f}%" if g_acc and h_acc else "-"
+        rev = mean("reversed_accuracy")
+        rev_s = f"{rev:4.1f}%" if rev == rev else "    -"
         print(f"{label:18s} | {acc.mean():5.1f}±{sd:4.1f}% {mean('cue_blind_phase'):5.1f}%"
               f" {acc.mean() - mean('cue_blind_phase'):+6.1f} |"
               + "".join(f" {mean(f'phase_{p+1}_accuracy'):4.1f}%"
                         for p in range(base.max_tasks))
               + f" | {mean('task0_last_phase'):5.1f}% | {mean('average_units'):6.1f}"
-              f" {mean('final_units'):6.1f} {mean('grow_events'):5.1f} | {nxt:>18s}")
+              f" {mean('final_units'):6.1f} {mean('grow_events'):5.1f} | {rev_s}"
+              f" {mean('repair_events'):6.1f}")
 
     results: Dict[str, List[Dict]] = {}
     for spec in ["control:random", "control:no-plasticity"] + specs:
@@ -1067,8 +1219,8 @@ def hand_mode(args: argparse.Namespace, device: torch.device) -> None:
 
     print("-" * 110)
     print("margin = accuracy - cue-blind (best fixed action per phase, hindsight). "
-          "next-acc = accuracy on the next\n3 trials of the same task+cue after an "
-          "error, when the organism grew vs held at that error.")
+          "rev = accuracy on remapped\npatterns after the reversal (--reversal). "
+          "repair = slot resets per life.")
 
     growth = [s for s in specs if parse_run(s)[0] != "fixed"]
     if growth:
@@ -1166,7 +1318,8 @@ def print_final(m: Dict, cfg: Config) -> None:
     print(f"FINAL TEST  run={cfg.run_name}  seed={cfg.seed}")
     print("=" * 78)
     for key in ("accuracy", "chance", "cue_blind_phase", "survival", "survival_fault",
-                "reward", "average_units", "final_units", "grow_events", "prune_events"):
+                "reward", "average_units", "final_units", "grow_events", "prune_events",
+                "repair_events", "reversed_accuracy"):
         print(f"{key:24s}: {m[key]:.3f}")
     margin = m["accuracy"] - m["cue_blind_phase"]
     print(f"\nAccuracy - cue-blind(phase) : {margin:+.2f} points "
@@ -1276,6 +1429,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-actions", type=int, default=4)
     p.add_argument("--fault-probability", type=float, default=0.65)
     p.add_argument("--rehearsal-fraction", type=float, default=0.30)
+    p.add_argument("--reward-noise", type=float, default=0.0,
+                   help="probability that feedback is flipped (true accuracy scored)")
+    p.add_argument("--reversal", action="store_true",
+                   help="remap the first --reversal-tasks tasks mid-life")
+    p.add_argument("--reversal-tasks", type=int, default=2)
+    p.add_argument("--init-repair-bias", type=float, default=-8.0)
+    p.add_argument("--init-repair-slot", type=float, default=0.0)
+    p.add_argument("--init-repair-wrong", type=float, default=0.0)
+    p.add_argument("--init-gate-slot", type=float, default=0.0)
 
     p.add_argument("--init-eta", type=float, default=0.0)
     p.add_argument("--init-temperature", type=float, default=0.3)
@@ -1302,6 +1464,10 @@ def config_from_args(args: argparse.Namespace) -> Config:
         steps=args.steps, max_tasks=args.max_tasks, n_cues=args.n_cues,
         n_actions=args.n_actions, fault_probability=args.fault_probability,
         rehearsal_fraction=args.rehearsal_fraction,
+        reward_noise=args.reward_noise, reversal=args.reversal,
+        reversal_tasks=args.reversal_tasks,
+        init_repair_bias=args.init_repair_bias, init_repair_slot=args.init_repair_slot,
+        init_repair_wrong=args.init_repair_wrong, init_gate_slot=args.init_gate_slot,
         pool=args.pool, initial_units=args.units,
         min_units=min(args.min_units, args.units), k=args.k, novelty=args.novelty,
         structure=args.structure,
