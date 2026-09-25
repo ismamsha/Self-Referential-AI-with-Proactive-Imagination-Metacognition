@@ -1,0 +1,11 @@
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/*.bbl
+paper/*.blg
+paper/*.fls
+paper/*.fdb_latexmk
+paper/results/raw/
+__pycache__/
+*.pyc
