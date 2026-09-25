@@ -9,3 +9,4 @@ paper/*.fdb_latexmk
 paper/results/raw/
 __pycache__/
 *.pyc
+paper/results/grid_log.txt
