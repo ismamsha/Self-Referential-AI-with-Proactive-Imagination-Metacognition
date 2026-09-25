@@ -85,3 +85,74 @@ python run_experiments.py        # full grid: 5 variants x 3 difficulties x 3 se
 
 `run_experiments.py` skips runs whose results already exist in `results/`; delete a JSON
 file to rerun it.
+
+## 🔧 Hidden-fault experiment
+
+`fault_experiment.py` asks whether the agent can notice that its own body has changed.
+In half of all episodes a hidden fault starts at a random step between 20 and 70. The
+agent only ever sees its resources, damage and the time.
+
+| Setting | Fault 1 | Fault 2 |
+|---|---|---|
+| Mild | Motor: work drains 0.25 × intensity extra resources | Battery: resting recovers a quarter as much |
+| Severe | Motor: work drains 0.5 × intensity extra resources | Fragile: random shocks become 3× as frequent |
+
+The agents share the same machinery (fear of death, no imagination) and differ only in
+one extra input to their state:
+
+- **Metacognitive:** surprise-doubt, a running average of how far reality lands from the
+  self-model's prediction (signed, in units of the predicted spread).
+- **Memory:** the raw last 4 transitions.
+- **Oracle:** the true fault flag.
+- **Fault-blind:** nothing extra.
+
+### Results
+
+Survival in episodes where a fault struck; mean over 3 seeds. Full tables with confidence
+intervals: [`results/faults_mild/summary.md`](results/faults_mild/summary.md) and
+[`results/faults_severe/summary.md`](results/faults_severe/summary.md).
+
+| Agent | Mild faults | Severe faults | Severe fault caught within 15 steps |
+|---|---|---|---|
+| Fault-blind | 95% | 72% | 5% (its disagreement signal) |
+| **Metacognitive** | **95%** | **43%** | **78%** (30% false alarms) |
+| Told the fault (oracle) | 83% | 53% | – |
+| Memory of last 4 steps | 32% | – | – |
+| First design: doubt also drives β | 86% | – | – |
+
+- **Surprise-doubt detects faults the agent cannot see.** It catches 78% of severe faults
+  within 15 steps, against 30% false alarms on healthy stretches. Ensemble disagreement,
+  the doubt signal of the earlier agents, barely reacts to faults.
+- **Detecting the fault did not improve survival.** Even the oracle, told exactly when the
+  fault began, survived less often than the fault-blind agent. With 500 training episodes,
+  the extra input splits the agent's experience into a rare "broken" case that the value
+  network learns poorly. The fault-blind agent learns one robust policy and reacts to the
+  resources it can see. After a fault, every agent cuts back work in the same way.
+- **The first design made things worse.** Feeding surprise-doubt into β with the paper's
+  constants left the agent permanently over-anxious.
+- **Results vary a lot between seeds** (the confidence intervals in the summaries are wide),
+  so treat single numbers with care.
+
+The open problem is using what the agent notices. One promising route is to let high
+doubt switch the self-model onto recent experience, so that its death predictions, and so
+the agent's fear, reflect the broken body.
+
+![Severe faults](results/faults_severe/fault_results.png)
+
+### Run it
+
+```bash
+python fault_experiment.py --faults mild      # 6 agents x 3 seeds, ~1 h on 4 cores
+python fault_experiment.py --faults severe    # 5 agents x 3 seeds
+```
+
+In the severe setting, only the metacognitive, oracle and fault-blind agents have been run
+so far.
+
+## 🗺️ Interactive diagram
+
+[`docs/doubting_agent.html`](docs/doubting_agent.html) is an interactive diagram of the
+agent's decision loop. It replays real recorded episodes: a hidden fault strikes, doubt
+rises, and you can watch what the agent chooses at every step. Click any part of the
+diagram for an explanation and the code that implements it. Open the file in a browser,
+or rebuild it from the results with `python docs/build_page.py`.

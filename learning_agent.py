@@ -97,12 +97,12 @@ def one_hot(actions):
 
 
 class ReplayBuffer:
-    def __init__(self, capacity):
+    def __init__(self, capacity, dim=STATE_DIM):
         self.capacity = capacity
-        self.s = np.zeros((capacity, STATE_DIM), np.float32)
+        self.s = np.zeros((capacity, dim), np.float32)
         self.a = np.zeros(capacity, np.int64)
         self.r = np.zeros(capacity, np.float32)
-        self.s2 = np.zeros((capacity, STATE_DIM), np.float32)
+        self.s2 = np.zeros((capacity, dim), np.float32)
         self.done = np.zeros(capacity, np.float32)
         self.ptr = 0
         self.size = 0
@@ -169,25 +169,30 @@ class SelfModelEnsemble(nn.Module):
 
 
 class LearningMSRA:
-    def __init__(self, cfg: Config):
+    """The Q-network sees the whole agent state; its first STATE_DIM entries are
+    (r, d, t), which is all the self-model uses. Extra entries (e.g. doubt or
+    memory) come from an observer, see fault_experiment.py."""
+
+    def __init__(self, cfg: Config, state_dim=STATE_DIM):
         self.cfg = cfg
         self.use_model = cfg.variant != "dqn"
         self.use_doubt = cfg.variant in ("msra", "msra_anxiety", "anxiety_real")
         self.fears_death = cfg.variant in ("msra_anxiety", "anxiety_real")
         self.imagines = self.use_model and cfg.variant != "anxiety_real"
 
-        self.q = mlp(STATE_DIM, N_ACTIONS)
+        self.q = mlp(state_dim, N_ACTIONS)
         self.q_target = copy.deepcopy(self.q)
         self.q_opt = torch.optim.Adam(self.q.parameters(), lr=cfg.lr)
-        self.real = ReplayBuffer(cfg.buffer_size)
+        self.real = ReplayBuffer(cfg.buffer_size, state_dim)
 
         if self.use_model:
             self.model = SelfModelEnsemble(cfg.ensemble_size, cfg.model_hidden)
             self.model_opt = torch.optim.Adam(self.model.parameters(), lr=cfg.model_lr,
                                               weight_decay=1e-5)
-            self.imagined = ReplayBuffer(cfg.imagined_buffer_size)
+            self.imagined = ReplayBuffer(cfg.imagined_buffer_size, state_dim)
 
         self.doubt = 0.0
+        self.external_doubt = False
         self.total_steps = 0
         self.cautious_choices = 0
         self.decisions = 0
@@ -204,7 +209,7 @@ class LearningMSRA:
     def epistemic(self, states):
         """Ensemble disagreement for every action, in reward units. Shape [n, N_ACTIONS]."""
         n = len(states)
-        s = np.repeat(states, N_ACTIONS, axis=0)
+        s = np.repeat(states[:, :STATE_DIM], N_ACTIONS, axis=0)
         a = np.tile(np.arange(N_ACTIONS), n)
         mean, _, _, _ = self.model(self.model.inputs(s, a))
         spread = mean.std(dim=0).norm(dim=-1) * self.model.y_std[3]
@@ -214,8 +219,22 @@ class LearningMSRA:
     def death_prob(self, state):
         """Self-predicted probability of dying on the next step, per action."""
         a = np.arange(N_ACTIONS)
-        _, _, _, death_logit = self.model(self.model.inputs(np.repeat(state[None], N_ACTIONS, 0), a))
+        s = np.repeat(state[None, :STATE_DIM], N_ACTIONS, 0)
+        _, _, _, death_logit = self.model(self.model.inputs(s, a))
         return torch.sigmoid(death_logit).mean(0).numpy()
+
+    @torch.no_grad()
+    def surprise(self, state, action, next_state):
+        """How far one real transition landed from the self-model's prediction,
+        in units of the predicted spread. Signed; one value each for r and d."""
+        m = self.model
+        s = state[None, :STATE_DIM]
+        mean, logvar, _, _ = m(m.inputs(s, np.array([action])))
+        mu = mean.mean(0)[0, :2]
+        var = logvar.exp().mean(0)[0, :2] + mean.var(0)[0, :2]
+        delta = torch.as_tensor(next_state[:2] - state[:2])
+        y = (delta - m.y_mean[:2]) / m.y_std[:2]
+        return ((y - mu) / var.sqrt()).numpy()
 
     @torch.no_grad()
     def act(self, state, eps):
@@ -238,7 +257,7 @@ class LearningMSRA:
             self.decisions += 1
             self.cautious_choices += int(a != int(np.argmax(q)))
 
-        if u is not None:
+        if u is not None and not self.external_doubt:
             d = self.cfg.doubt_decay
             self.doubt = d * self.doubt + (1 - d) * float(u[a])
         return a
@@ -272,13 +291,14 @@ class LearningMSRA:
         m = self.model
         if self.total_steps % 500 == 0 or self.total_steps <= self.cfg.batch_size:
             s, a, r, s2, _ = self.real.sample(0, idx=np.arange(len(self.real)))
-            y = np.concatenate([s2 - s, r[:, None]], axis=1)
+            y = np.concatenate([s2[:, :STATE_DIM] - s[:, :STATE_DIM], r[:, None]], axis=1)
             m.y_mean.copy_(torch.as_tensor(y.mean(0)))
             m.y_std.copy_(torch.as_tensor(np.maximum(y.std(0), 1e-3)))
 
         # Each member trains on its own bootstrap sample.
         idx = np.random.randint(0, len(self.real), (m.k, self.cfg.batch_size))
         s, a, r, s2, done = self.real.sample(0, idx=idx.reshape(-1))
+        s, s2 = s[:, :STATE_DIM], s2[:, :STATE_DIM]
         x = torch.cat([torch.as_tensor(s), one_hot(a)], dim=-1).view(m.k, self.cfg.batch_size, -1)
         y = torch.as_tensor(np.concatenate([s2 - s, r[:, None]], axis=1))
         y = ((y - m.y_mean) / m.y_std).view(m.k, self.cfg.batch_size, -1)
@@ -304,7 +324,7 @@ class LearningMSRA:
         explore = np.random.rand(n) < eps
         a[explore] = np.random.randint(0, N_ACTIONS, explore.sum())
 
-        mean, logvar, done_logit, _ = m(m.inputs(s, a))
+        mean, logvar, done_logit, _ = m(m.inputs(s[:, :STATE_DIM], a))
         member = torch.randint(0, m.k, (n,))
         rows = torch.arange(n)
         mean, logvar = mean[member, rows], logvar[member, rows]
@@ -312,7 +332,8 @@ class LearningMSRA:
         y = (y * m.y_std + m.y_mean).numpy()
         done = (torch.rand(n) < torch.sigmoid(done_logit[member, rows])).numpy()
 
-        s2 = np.clip(s + y[:, :STATE_DIM], 0.0, 1.0).astype(np.float32)
+        s2 = s.copy()
+        s2[:, :STATE_DIM] = np.clip(s[:, :STATE_DIM] + y[:, :STATE_DIM], 0.0, 1.0)
         r = y[:, 3]
         if self.use_doubt:
             u = self.epistemic(s)[rows.numpy(), a]
@@ -329,26 +350,44 @@ def survived(env):
     return env.step_count >= env.max_steps and env.r > 0 and env.d < 1.0
 
 
-def run_episode(agent, env, eps, learn):
+def learn_step(agent, s, a, reward, s2, done, eps):
+    """Store one real transition and run the learning updates it triggers."""
     c = agent.cfg
-    s = internal_state(env.reset())
+    agent.real.add(s[None], np.array([a]), np.array([reward], np.float32),
+                   s2[None], np.array([float(done)], np.float32))
+    agent.total_steps += 1
+    if len(agent.real) >= c.batch_size:
+        if agent.use_model and agent.total_steps % c.model_train_every == 0:
+            agent.update_model()
+        if agent.model_ready and agent.imagines:
+            agent.imagine(c.imagined_per_step, eps)
+        agent.update_q()
+
+
+class PlainObserver:
+    """Builds the agent's state from an observation: just (r, d, t)."""
+
+    extra_dim = 0
+
+    def reset(self, obs, env):
+        return internal_state(obs)
+
+    def step(self, obs, env, s, a):
+        return internal_state(obs)
+
+
+def run_episode(agent, env, eps, learn, observer=None):
+    observer = observer or PlainObserver()
+    s = observer.reset(env.reset(), env)
     total, work = 0.0, 0
     while True:
         a = agent.act(s, eps)
         next_obs, reward, _, done, _, _ = env.step(a)
-        s2 = internal_state(next_obs)
+        s2 = observer.step(next_obs, env, s, a)
         total += reward
         work += a >= 2
         if learn:
-            agent.real.add(s[None], np.array([a]), np.array([reward], np.float32),
-                           s2[None], np.array([float(done)], np.float32))
-            agent.total_steps += 1
-            if len(agent.real) >= c.batch_size:
-                if agent.use_model and agent.total_steps % c.model_train_every == 0:
-                    agent.update_model()
-                if agent.model_ready and agent.imagines:
-                    agent.imagine(c.imagined_per_step, eps)
-                agent.update_q()
+            learn_step(agent, s, a, reward, s2, done, eps)
         s = s2
         if done:
             return total, survived(env), work / env.step_count, env.step_count

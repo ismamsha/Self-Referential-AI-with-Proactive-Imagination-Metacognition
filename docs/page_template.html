@@ -1,0 +1,634 @@
+<title>The Doubting Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #f2f4f1;
+  --panel: #fbfcfa;
+  --ink: #1b2320;
+  --muted: #5b6661;
+  --rule: #d3d9d4;
+  --soft: #e6ebe6;
+  --resources: #1d7686;
+  --damage: #b14f36;
+  --doubt: #6f47d1;
+  --fault: #b98900;
+  --fault-soft: #fbefc6;
+  --doubt-soft: #ece6fb;
+  --focus: #6f47d1;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #111513;
+    --panel: #171d1a;
+    --ink: #e4ebe7;
+    --muted: #97a39d;
+    --rule: #2d3632;
+    --soft: #222a26;
+    --resources: #52b6c7;
+    --damage: #e27d62;
+    --doubt: #a98cf2;
+    --fault: #f0c43a;
+    --fault-soft: #3a3217;
+    --doubt-soft: #2a2340;
+    --focus: #a98cf2;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #111513;
+  --panel: #171d1a;
+  --ink: #e4ebe7;
+  --muted: #97a39d;
+  --rule: #2d3632;
+  --soft: #222a26;
+  --resources: #52b6c7;
+  --damage: #e27d62;
+  --doubt: #a98cf2;
+  --fault: #f0c43a;
+  --fault-soft: #3a3217;
+  --doubt-soft: #2a2340;
+  --focus: #a98cf2;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.6 var(--body);
+  padding-inline: 16px;
+  padding-block: 0 48px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 40px; }
+header { padding-block: 44px 0; display: grid; gap: 12px; max-width: 760px; }
+.eyebrow {
+  font: 500 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+h1 {
+  font: 700 clamp(38px, 6vw, 60px)/1.02 var(--display); letter-spacing: -0.02em; margin: 0; text-wrap: balance;
+}
+h1 em { font-style: normal; color: var(--doubt); }
+.lede { margin: 0; font-size: 17px; color: var(--muted); max-width: 64ch; }
+h2 { font: 700 26px/1.2 var(--display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+p { margin: 0; }
+section { display: grid; gap: 16px; }
+
+.stage {
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+  display: grid; gap: 0; overflow: hidden;
+}
+.controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  padding: 14px 18px; border-bottom: 1px solid var(--rule);
+}
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
+.seg button {
+  font: 500 13px/1 var(--body); color: var(--muted); background: transparent; border: 0;
+  padding: 9px 12px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.btn {
+  font: 600 13px/1 var(--body); color: var(--ink); background: var(--soft); border: 1px solid var(--rule);
+  border-radius: 7px; padding: 9px 12px; cursor: pointer; min-width: 38px;
+}
+.btn.primary { background: var(--doubt); border-color: var(--doubt); color: #fff; min-width: 84px; }
+button:focus-visible, [role="button"]:focus-visible, input:focus-visible {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+.scrub { display: flex; align-items: center; gap: 10px; flex: 1 1 220px; min-width: 0; }
+.scrub input { flex: 1; min-width: 0; accent-color: var(--doubt); }
+.stepno { font: 500 13px/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.narration {
+  padding: 12px 18px; font-size: 15px; border-bottom: 1px solid var(--rule); min-height: 50px;
+  display: flex; align-items: center; gap: 10px;
+}
+.narration .tag {
+  font: 600 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 5px 7px; border-radius: 4px; background: var(--soft); color: var(--muted); white-space: nowrap;
+}
+.narration .tag.fault { background: var(--fault-soft); color: var(--ink); }
+.narration .tag.alarm { background: var(--doubt-soft); color: var(--doubt); }
+.diagram { overflow-x: auto; padding: 8px 8px 0; }
+.diagram svg { display: block; width: 100%; min-width: 780px; height: auto; }
+.timeline { overflow-x: auto; padding: 0 8px 10px; border-top: 1px solid var(--rule); }
+.timeline svg { display: block; width: 100%; min-width: 780px; height: auto; }
+
+/* diagram parts */
+.region { fill: none; stroke: var(--rule); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.region-label { font: 500 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; fill: var(--muted); }
+.part rect.box, .part circle.box { fill: var(--panel); stroke: var(--ink); stroke-width: 1.5; }
+.part { cursor: pointer; }
+.part:hover rect.box, .part:hover circle.box { fill: var(--soft); }
+.part.selected rect.box, .part.selected circle.box { stroke: var(--doubt); stroke-width: 2.5; }
+.part:focus { outline: none; }
+.part:focus-visible rect.box, .part:focus-visible circle.box { stroke: var(--focus); stroke-width: 3; }
+.title { font: 700 15px var(--display); fill: var(--ink); }
+.sub { font: 400 11.5px var(--body); fill: var(--muted); }
+.val { font: 500 11.5px var(--mono); fill: var(--ink); font-variant-numeric: tabular-nums; }
+.glyph { font: 600 20px var(--mono); fill: var(--ink); }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.edge-label { font: 500 11px var(--body); fill: var(--muted); }
+.flowing .edge { stroke-dasharray: 5 5; animation: flow 0.9s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -20; } }
+@media (prefers-reduced-motion: reduce) { .flowing .edge { animation: none; stroke-dasharray: none; } }
+.tank { fill: var(--soft); stroke: var(--rule); }
+.fill-r { fill: var(--resources); }
+.fill-d { fill: var(--damage); }
+.meter-bg { fill: var(--soft); }
+.meter-doubt { fill: var(--doubt); }
+.meter-beta { fill: var(--ink); }
+.alarm-tick { stroke: var(--ink); stroke-width: 2; }
+.fault-off { fill: var(--soft); stroke: var(--rule); }
+.fault-on { fill: var(--fault); stroke: var(--fault); }
+.chip rect { fill: var(--panel); stroke: var(--rule); stroke-width: 1.2; }
+.chip text { font: 500 11.5px var(--body); fill: var(--muted); }
+.chip.on rect { fill: var(--ink); stroke: var(--ink); }
+.chip.on text { fill: var(--panel); font-weight: 600; }
+.hop { fill: none; stroke: var(--panel); stroke-width: 7; }
+
+/* timeline */
+.axis { stroke: var(--rule); stroke-width: 1; }
+.tick-label { font: 400 10.5px var(--mono); fill: var(--muted); }
+.lane-label { font: 600 11px var(--body); fill: var(--ink); }
+.line-r { fill: none; stroke: var(--resources); stroke-width: 2; }
+.line-d { fill: none; stroke: var(--damage); stroke-width: 2; }
+.line-doubt { fill: none; stroke: var(--doubt); stroke-width: 2; }
+.threshold { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.onset { stroke: var(--fault); stroke-width: 2; }
+.onset-label { font: 600 10.5px var(--body); fill: var(--ink); }
+.playhead { stroke: var(--ink); stroke-width: 1.5; }
+.act-rest { fill: var(--resources); opacity: 0.35; }
+.act-repair { fill: var(--damage); }
+.act-work { fill: var(--ink); }
+
+.explain { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 20px 22px; display: grid; gap: 10px; }
+.card h3 { font: 700 20px/1.2 var(--display); margin: 0; }
+.card .code { font: 400 13px/1.5 var(--mono); color: var(--muted); }
+.card .code code { color: var(--ink); }
+.hint { font-size: 13px; color: var(--muted); }
+ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+ol.steps li::marker { font: 500 13px var(--mono); color: var(--muted); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 600 12px/1.3 var(--body); color: var(--muted); }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.best td { font-weight: 600; }
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+.findings > div { display: grid; gap: 12px; align-content: start; }
+.note { font-size: 13px; color: var(--muted); max-width: 70ch; }
+footer { font-size: 13px; color: var(--muted); display: grid; gap: 4px; }
+footer a { color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--muted); padding: 0 18px 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.sw.box { height: 10px; width: 10px; border-radius: 2px; }
+
+@media (max-width: 760px) {
+  .explain { grid-template-columns: 1fr; }
+  header { padding-block: 28px 0; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Metacognitive self-referential agent</div>
+    <h1>The agent that <em>doubts</em> its own body</h1>
+    <p class="lede">It keeps a learned model of itself, checks every step whether reality matched that model, and grows more careful when it stops matching. Below is a real episode recorded from the trained agent, replayed step by step.</p>
+  </header>
+
+  <section aria-label="Live replay of the agent">
+    <div class="stage">
+      <div class="controls">
+        <div class="seg" id="seg" role="group" aria-label="Episode"></div>
+        <button type="button" class="btn primary" id="play">Play</button>
+        <button type="button" class="btn" id="back" aria-label="Step back">‹</button>
+        <button type="button" class="btn" id="fwd" aria-label="Step forward">›</button>
+        <div class="scrub">
+          <input type="range" id="scrubber" min="0" max="99" value="0" aria-label="Step">
+          <span class="stepno" id="stepno">step 0</span>
+        </div>
+      </div>
+      <div class="narration" id="narration" aria-live="polite"></div>
+
+      <div class="diagram">
+        <svg id="diagram" viewBox="0 0 1080 560" role="img"
+             aria-label="The agent's loop: its hidden body is sensed, a self-model predicts the next step, the surprise between prediction and reality builds doubt, doubt raises anxiety beta, and value, fear of death and beta together choose the action that acts on the body.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+
+          <rect class="region" x="14" y="36" width="224" height="508" rx="12"/>
+          <text class="region-label" x="28" y="58">Hidden body</text>
+          <rect class="region" x="262" y="14" width="804" height="530" rx="12"/>
+          <text class="region-label" x="1052" y="32" text-anchor="end">The agent's mind</text>
+
+          <g style="color: var(--muted)">
+            <!-- body -> senses -->
+            <path class="edge" d="M222 110 H288" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="255" y="101" text-anchor="middle">observes</text>
+            <!-- senses -> self-model -->
+            <path class="edge" d="M452 110 H518" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="485" y="101" text-anchor="middle">state</text>
+            <!-- self-model -> compare -->
+            <path class="edge" d="M732 110 H791" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="761" y="101" text-anchor="middle">predicts</text>
+            <!-- compare -> doubt -->
+            <path class="edge" d="M839 110 H888" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="863" y="101" text-anchor="middle">surprise</text>
+            <!-- senses -> compare: actual outcome -->
+            <path class="edge" d="M370 68 V38 H815 V86" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="592" y="32" text-anchor="middle">what actually happened</text>
+            <!-- self-model -> fear -->
+            <path class="edge" d="M625 152 V268" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="633" y="246">P(death)</text>
+            <!-- self-model -> beta -->
+            <path class="edge" d="M712 152 V228 H970 V268" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="842" y="220" text-anchor="middle">uncertainty</text>
+            <!-- doubt -> state, hopping over the two self-model edges -->
+            <path class="hop" d="M620 188 H630 M707 188 H717"/>
+            <path class="edge" d="M1030 152 V188 H374" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="872" y="180" text-anchor="middle">doubt joins its state</text>
+            <!-- senses -> value -->
+            <path class="edge" d="M370 152 V268" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="378" y="246">state + doubt</text>
+            <!-- value/fear/beta -> decision -->
+            <path class="edge" d="M370 352 V428" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="378" y="395">value</text>
+            <path class="edge" d="M625 352 V428" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="633" y="395">risk</text>
+            <path class="edge" d="M970 352 V428" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="978" y="395">weight on fear</text>
+            <!-- decision -> body -->
+            <path class="edge" d="M288 482 H222" marker-end="url(#arrow)"/>
+            <text class="edge-label" x="255" y="473" text-anchor="middle">acts</text>
+          </g>
+
+          <g class="part" data-part="body" tabindex="0" role="button" aria-label="Body">
+            <rect class="box" x="30" y="70" width="190" height="460" rx="8"/>
+            <text class="title" x="125" y="100" text-anchor="middle">Body</text>
+            <rect class="tank" x="52" y="122" width="56" height="280" rx="4"/>
+            <rect class="fill-r" id="r-fill" x="52" y="402" width="56" height="0" rx="4"/>
+            <rect class="tank" x="142" y="122" width="56" height="280" rx="4"/>
+            <rect class="fill-d" id="d-fill" x="142" y="402" width="56" height="0" rx="4"/>
+            <text class="sub" x="80" y="422" text-anchor="middle">Resources</text>
+            <text class="val" id="r-val" x="80" y="440" text-anchor="middle">1.00</text>
+            <text class="sub" x="170" y="422" text-anchor="middle">Damage</text>
+            <text class="val" id="d-val" x="170" y="440" text-anchor="middle">0.00</text>
+            <circle id="fault-light" class="fault-off" cx="56" cy="490" r="9"/>
+            <text class="sub" id="fault-text" x="74" y="486">No fault</text>
+            <text class="sub" id="fault-sub" x="74" y="502"></text>
+          </g>
+
+          <g class="part" data-part="senses" tabindex="0" role="button" aria-label="Senses">
+            <rect class="box" x="290" y="70" width="160" height="80" rx="8"/>
+            <text class="title" x="306" y="96">Senses</text>
+            <text class="sub" x="306" y="115">resources, damage, time</text>
+            <text class="val" id="sense-vals" x="306" y="136">r 1.00 · d 0.00</text>
+          </g>
+
+          <g class="part" data-part="selfmodel" tabindex="0" role="button" aria-label="Self-model">
+            <rect class="box" x="520" y="70" width="210" height="80" rx="8"/>
+            <text class="title" x="536" y="96">Self-model</text>
+            <text class="sub" x="536" y="115">5 networks predict the next</text>
+            <text class="sub" x="536" y="132">r, d, reward and P(death)</text>
+          </g>
+
+          <g class="part" data-part="compare" tabindex="0" role="button" aria-label="Compare prediction with reality">
+            <circle class="box" cx="815" cy="110" r="22"/>
+            <text class="glyph" x="815" y="117" text-anchor="middle">≠</text>
+            <text class="sub" x="815" y="150" text-anchor="middle">compare</text>
+          </g>
+
+          <g class="part" data-part="doubt" tabindex="0" role="button" aria-label="Doubt">
+            <rect class="box" x="890" y="70" width="160" height="80" rx="8"/>
+            <text class="title" x="906" y="96">Doubt</text>
+            <rect class="meter-bg" x="906" y="108" width="128" height="12" rx="3"/>
+            <rect class="meter-doubt" id="doubt-fill" x="906" y="108" width="0" height="12" rx="3"/>
+            <line class="alarm-tick" x1="949" y1="104" x2="949" y2="124"/>
+            <text class="val" id="doubt-val" x="906" y="139">0.0× alarm</text>
+          </g>
+
+          <g class="part" data-part="value" tabindex="0" role="button" aria-label="Value network">
+            <rect class="box" x="290" y="270" width="160" height="80" rx="8"/>
+            <text class="title" x="306" y="296">Value network</text>
+            <text class="sub" x="306" y="315">how much future reward</text>
+            <text class="sub" x="306" y="332">each action leads to</text>
+          </g>
+
+          <g class="part" data-part="fear" tabindex="0" role="button" aria-label="Fear of death">
+            <rect class="box" x="520" y="270" width="210" height="80" rx="8"/>
+            <text class="title" x="536" y="296">Fear of death</text>
+            <text class="sub" x="536" y="315">the self-model's chance of</text>
+            <text class="sub" x="536" y="332">dying after each action</text>
+          </g>
+
+          <g class="part" data-part="beta" tabindex="0" role="button" aria-label="Anxiety beta">
+            <rect class="box" x="890" y="270" width="160" height="80" rx="8"/>
+            <text class="title" x="906" y="296">Anxiety β</text>
+            <rect class="meter-bg" x="906" y="308" width="128" height="12" rx="3"/>
+            <rect class="meter-beta" id="beta-fill" x="906" y="308" width="0" height="12" rx="3"/>
+            <text class="val" id="beta-val" x="906" y="339">β 0.50</text>
+          </g>
+
+          <g class="part" data-part="decision" tabindex="0" role="button" aria-label="Decision">
+            <rect class="box" x="290" y="430" width="760" height="100" rx="8"/>
+            <text class="title" x="306" y="458">Decision</text>
+            <text class="sub" x="306" y="478">score = value − β × uncertainty</text>
+            <text class="sub" x="306" y="495">− β × P(death) × best value</text>
+            <text class="sub" x="306" y="512">highest score wins</text>
+            <g id="chips"></g>
+          </g>
+        </svg>
+      </div>
+      <div class="legend" aria-hidden="true">
+        <span><i class="sw" style="background: var(--resources)"></i>Resources</span>
+        <span><i class="sw" style="background: var(--damage)"></i>Damage</span>
+        <span><i class="sw" style="background: var(--doubt)"></i>Doubt ÷ alarm level</span>
+        <span><i class="sw" style="background: var(--fault)"></i>Hidden fault begins</span>
+        <span><i class="sw box" style="background: var(--ink)"></i>Work</span>
+        <span><i class="sw box" style="background: var(--resources); opacity: .35"></i>Rest</span>
+        <span><i class="sw box" style="background: var(--damage)"></i>Repair</span>
+      </div>
+      <div class="timeline">
+        <svg id="timeline" viewBox="0 0 1080 250" role="img" aria-label="Timeline of the whole episode: resources and damage, doubt relative to the alarm level, and the action taken at each step."></svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="explain">
+    <div class="card" id="explain" aria-live="polite">
+      <h3 id="ex-title"></h3>
+      <p id="ex-body"></p>
+      <p class="code" id="ex-code"></p>
+      <p class="hint">Click any box in the diagram to read about it.</p>
+    </div>
+    <div class="card">
+      <h3>One step, in order</h3>
+      <ol class="steps">
+        <li>Sense resources, damage and the time, and add the current doubt to make the state.</li>
+        <li>Score every action: its value, minus β times the self-model's uncertainty and risk of dying.</li>
+        <li>Act, and see what the body did.</li>
+        <li>Compare that with what the self-model predicted.</li>
+        <li>Fold the surprise into doubt, ready for the next state.</li>
+        <li>Learn: the value network and the self-model both train on the new experience.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the experiments found</h2>
+    <div class="findings">
+      <div>
+        <p><strong>Learning to survive.</strong> Hard difficulty, no hidden faults. 400 training episodes, then 200 test episodes; mean of 3 training runs.</p>
+        <div class="tablewrap"><table id="t-learning"></table></div>
+        <p class="note">Fear of death is the part that makes survival reliable. It also earns more reward, because the agent stops losing whole episodes.</p>
+      </div>
+      <div>
+        <p><strong>Surviving a hidden fault.</strong> Survival in episodes where a hidden fault struck; hard difficulty. 500 training episodes, then 300 test episodes; mean of 3 training runs. "Caught it" is how often doubt crossed the alarm level within 15 steps of a severe fault.</p>
+        <div class="tablewrap"><table id="t-faults"></table></div>
+        <p class="note" id="fault-note"></p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Code: <a href="https://github.com/ismamsha/Self-Referential-AI-with-Proactive-Imagination-Metacognition/tree/claude/research-opinion-ly94jb">learning_agent.py and fault_experiment.py</a>. The replay shows the first test episode of each kind from training run 0, unedited.</span>
+  </footer>
+</div>
+
+<script>
+const DATA = __DATA__;
+
+const ACTIONS = ["Rest", "Repair", "Work hard", "Work medium", "Work light"];
+const FAULT_LABEL = { actuator: "Motor fault", battery: "Battery fault", fragile: "Fragile body", healthy: "Healthy body" };
+const PARTS = {
+  body: ["Body", "The agent's body has resources and damage. Work earns reward but drains resources and wears the body down; rest recovers resources; repair fixes damage at a cost. Random shocks hit about 12% of steps. " + DATA.fault_text + " The agent's senses never report the fault.", "<code>FaultyHomeostasisEnv</code> in fault_experiment.py"],
+  senses: ["Senses", "All the agent can see is its resources, its damage and the time. It never sees a shock or a fault directly, only their effects on those three numbers.", "<code>internal_state()</code> in learning_agent.py"],
+  selfmodel: ["Self-model", "Five small neural networks, each trained on the agent's own experience, predict what one step of each action will do: the change in resources and damage, the reward, and the chance of dying. Each network also predicts how noisy the outcome is, so ordinary random shocks count as expected noise rather than as a mistake.", "<code>SelfModelEnsemble</code> in learning_agent.py"],
+  compare: ["Compare", "After every step the agent measures how far reality landed from its prediction, in units of the spread it predicted. Near zero means it went as expected. The sign is kept: draining faster than predicted pushes one way, recovering faster pushes the other.", "<code>LearningMSRA.surprise()</code> in learning_agent.py"],
+  doubt: ["Doubt", "A running average of recent surprise. A single shock barely moves it, because it averages over roughly the last seven steps. A fault keeps reality on the wrong side of the prediction step after step, so doubt climbs. Doubt then becomes part of the agent's state, and the value network learns from experience what to do when it is high. The tick on the meter is the alarm level: healthy steps exceed it only 5% of the time.", "<code>SurpriseObserver</code> in fault_experiment.py"],
+  beta: ["Anxiety β", "Equation 10 from the paper: β = 0.5 + 0.6 × max(0, 0.3 − resources) + 3 × uncertainty, where uncertainty is a running average of how much the five self-model networks disagree. It sets how heavily the agent weighs the unknown and the chance of dying. Low resources and an unfamiliar situation both make it more careful.", "<code>LearningMSRA.beta()</code> in learning_agent.py"],
+  value: ["Value network", "A neural network learned by trial and error (Double DQN) estimates how much future reward each action leads to. Its input is the agent's whole state, including doubt, so it can learn what to do once it stops trusting its body.", "<code>LearningMSRA.update_q()</code> in learning_agent.py"],
+  fear: ["Fear of death", "The self-model predicts the chance of dying on the next step for each action. The value network already counts the expected cost of dying; this adds extra weight, scaled by β, so the agent trades some reward for staying alive.", "<code>LearningMSRA.death_prob()</code> in learning_agent.py"],
+  decision: ["Decision", "Each action's score is its value, minus β times the self-model's uncertainty about that action, minus β times its risk of death times the best value on offer. The highest score wins. There are no hand-written rules: every term is learned.", "<code>LearningMSRA.act()</code> in learning_agent.py"],
+};
+
+const $ = (id) => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent, text) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+const chips = $("chips");
+const chipEls = ACTIONS.map((name, i) => {
+  const g = el("g", { class: "chip" }, chips);
+  const x = 560 + i * 96;
+  el("rect", { x, y: 458, width: 88, height: 40, rx: 6 }, g);
+  el("text", { x: x + 44, y: 482, "text-anchor": "middle" }, g, name);
+  return g;
+});
+
+const DOUBT_MAX = 3;   // meter spans 0-3x the alarm level
+const BETA_MAX = 4;
+
+let ep = null, key = "actuator", i = 0, timer = null;
+
+function selectPart(name) {
+  document.querySelectorAll(".part").forEach(p => p.classList.toggle("selected", p.dataset.part === name));
+  const [t, b, c] = PARTS[name];
+  $("ex-title").textContent = t;
+  $("ex-body").textContent = b;
+  $("ex-code").innerHTML = "In the code: " + c;
+}
+document.querySelectorAll(".part").forEach(p => {
+  p.addEventListener("click", () => selectPart(p.dataset.part));
+  p.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectPart(p.dataset.part); }
+  });
+});
+
+function lastStep() { return ep.actions.length - 1; }
+
+function render() {
+  const r = ep.r[i], d = ep.d[i], dz = ep.doubt[i] / DATA.threshold, a = ep.actions[i];
+  const beta = ep.beta[i];
+  const faultOn = ep.onset !== null && i >= ep.onset;
+
+  $("r-fill").setAttribute("y", 402 - 280 * r);
+  $("r-fill").setAttribute("height", 280 * r);
+  $("d-fill").setAttribute("y", 402 - 280 * d);
+  $("d-fill").setAttribute("height", 280 * d);
+  $("r-val").textContent = r.toFixed(2);
+  $("d-val").textContent = d.toFixed(2);
+  $("fault-light").setAttribute("class", faultOn ? "fault-on" : "fault-off");
+  $("fault-text").textContent = faultOn ? FAULT_LABEL[ep.fault] : "No fault";
+  $("fault-sub").textContent = faultOn ? "agent can't see this" : "";
+  $("sense-vals").textContent = `r ${r.toFixed(2)} · d ${d.toFixed(2)}`;
+  $("doubt-fill").setAttribute("width", 128 * Math.min(dz, DOUBT_MAX) / DOUBT_MAX);
+  $("doubt-val").textContent = `${dz.toFixed(1)}× alarm`;
+  $("beta-fill").setAttribute("width", 128 * Math.min(beta, BETA_MAX) / BETA_MAX);
+  $("beta-val").textContent = `β ${beta.toFixed(2)}`;
+  chipEls.forEach((c, k) => c.classList.toggle("on", k === a));
+
+  $("scrubber").value = i;
+  $("stepno").textContent = `step ${i} of ${lastStep()}`;
+  $("playhead").setAttribute("x1", tx(i));
+  $("playhead").setAttribute("x2", tx(i));
+
+  const n = $("narration");
+  n.textContent = "";
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  if (faultOn) { tag.classList.add("fault"); tag.textContent = `fault +${i - ep.onset}`; }
+  else tag.textContent = ep.onset !== null ? `fault in ${ep.onset - i}` : "healthy";
+  n.appendChild(tag);
+  if (dz > 1) {
+    const al = document.createElement("span");
+    al.className = "tag alarm";
+    al.textContent = "doubt above alarm";
+    n.appendChild(al);
+  }
+  let text = `Doubt ${dz.toFixed(1)}× the alarm level, β ${beta.toFixed(2)}. Chose ${ACTIONS[a].toLowerCase()}.`;
+  if (i === lastStep()) {
+    text += ep.survived ? " Survived all 100 steps." :
+      (ep.r[i + 1] <= 0 ? ` Resources ran out; the episode ended at step ${i + 1}.` : ` Damage hit 100%; the episode ended at step ${i + 1}.`);
+  }
+  n.appendChild(document.createTextNode(text));
+}
+
+// timeline
+const TL = { x0: 70, x1: 1060 };
+const tx = (s) => TL.x0 + (TL.x1 - TL.x0) * s / 100;
+function drawTimeline() {
+  const svg = $("timeline");
+  svg.textContent = "";
+  const lanes = [{ y: 18, h: 90 }, { y: 136, h: 64 }, { y: 216, h: 14 }];
+  const [L1, L2, L3] = lanes;
+
+  el("text", { class: "lane-label", x: 8, y: L1.y + 10 }, svg, "Body");
+  [0, 0.5, 1].forEach(v => {
+    const y = L1.y + L1.h * (1 - v);
+    el("line", { class: "axis", x1: TL.x0, x2: TL.x1, y1: y, y2: y }, svg);
+    el("text", { class: "tick-label", x: TL.x0 - 6, y: y + 3, "text-anchor": "end" }, svg, v.toFixed(1));
+  });
+  const path = (arr, lane, scale) => arr.map((v, s) =>
+    `${s ? "L" : "M"}${tx(s).toFixed(1)} ${(lane.y + lane.h * (1 - Math.min(v, scale) / scale)).toFixed(1)}`).join(" ");
+  el("path", { class: "line-r", d: path(ep.r, L1, 1) }, svg);
+  el("path", { class: "line-d", d: path(ep.d, L1, 1) }, svg);
+
+  const peak = Math.max(2, Math.ceil(Math.max(...ep.doubt) / DATA.threshold));
+  el("text", { class: "lane-label", x: 8, y: L2.y + 10 }, svg, "Doubt");
+  [0, 1, peak].forEach(v => {
+    const y = L2.y + L2.h * (1 - v / peak);
+    el("line", { class: v === 1 ? "threshold" : "axis", x1: TL.x0, x2: TL.x1, y1: y, y2: y }, svg);
+    el("text", { class: "tick-label", x: TL.x0 - 6, y: y + 3, "text-anchor": "end" }, svg, v === 1 ? "alarm" : `${v}×`);
+  });
+  el("path", { class: "line-doubt", d: path(ep.doubt.map(v => v / DATA.threshold), L2, peak) }, svg);
+
+  el("text", { class: "lane-label", x: 8, y: L3.y + 11 }, svg, "Action");
+  const w = (TL.x1 - TL.x0) / 100;
+  ep.actions.forEach((a, s) => {
+    const cls = a === 0 ? "act-rest" : a === 1 ? "act-repair" : "act-work";
+    const h = a >= 2 ? L3.h * [1, 0.7, 0.4][a - 2] : L3.h;
+    el("rect", { class: cls, x: tx(s) + 0.5, y: L3.y + L3.h - h, width: Math.max(w - 1, 1), height: h }, svg);
+  });
+
+  [0, 25, 50, 75, 100].forEach(s => {
+    el("text", { class: "tick-label", x: tx(s), y: 246, "text-anchor": "middle" }, svg, s);
+  });
+  if (ep.onset !== null) {
+    el("line", { class: "onset", x1: tx(ep.onset), x2: tx(ep.onset), y1: L1.y - 6, y2: L3.y + L3.h }, svg);
+    el("text", { class: "onset-label", x: tx(ep.onset) + 5, y: L1.y - 2 }, svg,
+      FAULT_LABEL[ep.fault].toLowerCase() + " starts");
+  }
+  el("line", { id: "playhead", class: "playhead", x1: tx(0), x2: tx(0), y1: 6, y2: L3.y + L3.h + 4 }, svg);
+  svg.addEventListener("click", (e) => {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    stop();
+    i = Math.max(0, Math.min(lastStep(), Math.round((p.x - TL.x0) / (TL.x1 - TL.x0) * 100)));
+    render();
+  });
+}
+
+const seg = $("seg");
+DATA.episode_order.forEach(k => {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.id = "ep-" + k;
+  b.dataset.ep = k;
+  b.textContent = FAULT_LABEL[k];
+  seg.appendChild(b);
+});
+
+function load(k) {
+  stop();
+  key = k;
+  ep = DATA.episodes[k];
+  document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.ep === k));
+  $("scrubber").max = lastStep();
+  drawTimeline();
+  i = ep.onset !== null ? Math.min(ep.onset + 12, lastStep()) : Math.min(40, lastStep());
+  render();
+}
+
+function stop() {
+  clearInterval(timer); timer = null;
+  $("play").textContent = "Play";
+  $("diagram").classList.remove("flowing");
+}
+function play() {
+  if (i >= lastStep()) i = 0;
+  $("play").textContent = "Pause";
+  $("diagram").classList.add("flowing");
+  timer = setInterval(() => {
+    if (i >= lastStep()) { stop(); return; }
+    i++; render();
+  }, 380);
+}
+$("play").addEventListener("click", () => timer ? stop() : play());
+$("back").addEventListener("click", () => { stop(); i = Math.max(0, i - 1); render(); });
+$("fwd").addEventListener("click", () => { stop(); i = Math.min(lastStep(), i + 1); render(); });
+$("scrubber").addEventListener("input", (e) => { stop(); i = +e.target.value; render(); });
+document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => load(b.dataset.ep)));
+const alarmX = 906 + 128 / DOUBT_MAX;
+document.querySelector(".alarm-tick").setAttribute("x1", alarmX);
+document.querySelector(".alarm-tick").setAttribute("x2", alarmX);
+
+function table(id, head, rows) {
+  const t = $(id);
+  const thead = t.createTHead().insertRow();
+  head.forEach(([h, num]) => { const th = document.createElement("th"); th.textContent = h; if (num) th.className = "num"; thead.appendChild(th); });
+  const tb = t.createTBody();
+  rows.forEach(r => {
+    const tr = tb.insertRow();
+    if (r.best) tr.className = "best";
+    r.cells.forEach(([v, num]) => { const td = tr.insertCell(); td.textContent = v; if (num) td.className = "num"; });
+  });
+}
+table("t-learning", [["Policy"], ["Survival", 1], ["Reward", 1]],
+  DATA.results.learning.map(r => ({ best: r.best, cells: [[r.label], [`${r.survival.toFixed(0)}%`, 1], [r.reward.toFixed(0), 1]] })));
+const pct = (v) => v === null ? "–" : `${v.toFixed(0)}%`;
+table("t-faults", [["Agent"], ["Mild faults", 1], ["Severe faults", 1], ["Caught it", 1]],
+  DATA.results.faults.map(r => ({ best: r.best, cells: [[r.label], [pct(r.mild), 1], [pct(r.severe), 1], [pct(r.detected), 1]] })));
+$("fault-note").textContent = DATA.results.fault_note;
+
+selectPart("doubt");
+load(DATA.episode_order[0]);
+</script>
