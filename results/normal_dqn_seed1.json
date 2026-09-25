@@ -1,0 +1,221 @@
+{
+  "config": {
+    "variant": "dqn",
+    "difficulty": "normal",
+    "episodes": 400,
+    "seed": 1,
+    "gamma": 0.99,
+    "lr": 0.001,
+    "batch_size": 128,
+    "buffer_size": 100000,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_frac": 0.5,
+    "target_tau": 0.005,
+    "ensemble_size": 5,
+    "model_hidden": 128,
+    "model_lr": 0.001,
+    "model_train_every": 2,
+    "model_warmup": 2000,
+    "imagined_per_step": 32,
+    "imagined_buffer_size": 20000,
+    "real_ratio": 0.5,
+    "beta_base": 0.5,
+    "lambda_r": 0.6,
+    "tau_r": 0.3,
+    "lambda_doubt": 3.0,
+    "doubt_decay": 0.9,
+    "eval_every": 20,
+    "eval_episodes": 20,
+    "final_eval_episodes": 200
+  },
+  "curve": [
+    {
+      "survival": 100.0,
+      "reward": 75.71080999999995,
+      "work_pct": 50.55,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 20,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 80.44613999999999,
+      "work_pct": 47.949999999999996,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 40,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 83.15088,
+      "work_pct": 49.449999999999996,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 60,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 94.02772999999999,
+      "work_pct": 53.05000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 80,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 100.42770000000002,
+      "work_pct": 55.35000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 100,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 102.05803,
+      "work_pct": 56.750000000000014,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 120,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 102.38890999999998,
+      "work_pct": 57.699999999999996,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 140,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 104.7064,
+      "work_pct": 57.4,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 160,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 104.18844000000001,
+      "work_pct": 57.550000000000004,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 180,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 104.02679,
+      "work_pct": 58.8,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 200,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 97.87051835999998,
+      "work_pct": 56.45000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 220,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 89.564694,
+      "work_pct": 64.3,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 240,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 98.12636999999998,
+      "work_pct": 54.45000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 260,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 106.12222999999999,
+      "work_pct": 57.95000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 280,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 105.43900999999997,
+      "work_pct": 57.34999999999999,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 300,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 99.9156,
+      "work_pct": 56.89999999999999,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 320,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 103.43753999999998,
+      "work_pct": 57.05000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 340,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 106.43409999999999,
+      "work_pct": 58.45,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 360,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 101.12688,
+      "work_pct": 55.99999999999999,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 380,
+      "doubt": 0.0
+    },
+    {
+      "survival": 100.0,
+      "reward": 104.58062999999997,
+      "work_pct": 57.00000000000001,
+      "steps": 100.0,
+      "caution_pct": 0.0,
+      "episode": 400,
+      "doubt": 0.0
+    }
+  ],
+  "final": {
+    "survival": 100.0,
+    "reward": 106.06859699999997,
+    "work_pct": 57.879999999999995,
+    "steps": 100.0,
+    "caution_pct": 0.0
+  }
+}
