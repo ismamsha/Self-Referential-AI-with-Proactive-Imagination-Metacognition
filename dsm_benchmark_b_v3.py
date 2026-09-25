@@ -147,6 +147,11 @@ class Config:
     plasticity: bool = True
     metacognition: bool = True       # False = doubt/learnability disconnected
 
+    # Representation (rule-test variants)
+    center: bool = False             # read out activity minus its own mean
+    retain: float = 0.0              # leaky units: h = r*h_prev + (1-r)*tanh(.)
+    no_delay: bool = False           # DIAGNOSTIC: cue also visible at response
+
     # Evolution
     generations: int = 100
     population: int = 64             # even
@@ -337,6 +342,14 @@ class BenchmarkB:
             self.current_target = self.mapping[
                 self.rows, self.current_task, self.current_cue
             ]
+            task_onehot = self.cfg.cue_gain * F.one_hot(
+                self.current_task, self.cfg.max_tasks
+            ).float()
+            cue_onehot = self.cfg.cue_gain * F.one_hot(
+                self.current_cue, self.cfg.n_cues
+            ).float()
+        elif self.cfg.no_delay:
+            # Diagnostic only: removes the memory requirement.
             task_onehot = self.cfg.cue_gain * F.one_hot(
                 self.current_task, self.cfg.max_tasks
             ).float()
@@ -587,7 +600,8 @@ def local_rule(coef: torch.Tensor, pre: torch.Tensor, post: torch.Tensor
 
 @torch.no_grad()
 def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
-              device: torch.device, record: bool = False) -> Dict:
+              device: torch.device, record: bool = False,
+              probe_lives: int = 0) -> Dict:
     population = theta.shape[0]
     lives = scenarios.n
     batch = population * lives
@@ -637,6 +651,14 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
     elig_rec = torch.zeros_like(birth_rec)
 
     reward_baseline = torch.zeros(batch, device=device)
+
+    # Per-neuron running mean of response-time activity (for --center).
+    readout_mean = torch.zeros(batch, H, device=device)
+
+    probe_n = min(probe_lives, batch)
+    probe_x: List[torch.Tensor] = []
+    probe_y: List[torch.Tensor] = []
+    probe_m: List[torch.Tensor] = []
 
     SELF_OUT = 3
     feature_dim = H + n_input
@@ -715,9 +737,16 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
             + rec_gain[:, None] * torch.einsum("bi,bij->bj", previous_hidden, birth_rec)
             + torch.einsum("bi,bij->bj", previous_hidden, plastic_rec)
         ) * active_f
+        if cfg.retain > 0.0:
+            hidden = cfg.retain * previous_hidden + (1.0 - cfg.retain) * hidden
+
+        # Readout representation: optionally centred by each neuron's own
+        # running mean, so learning targets cue-specific activity instead of
+        # the component shared by every cue.
+        readout = (hidden - readout_mean) * active_f if cfg.center else hidden
 
         w_out = birth_out + plastic_out
-        logits = torch.einsum("bi,bij->bj", hidden, w_out)
+        logits = torch.einsum("bi,bij->bj", readout, w_out)
         policy = torch.softmax(logits / temperature[:, None], dim=1)
 
         if cfg.random_policy:
@@ -817,7 +846,7 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
 
             if cfg.plasticity:
                 action_onehot = F.one_hot(action, A).float()
-                d_out = local_rule(g["rule_out"], hidden, action_onehot - policy)
+                d_out = local_rule(g["rule_out"], readout, action_onehot - policy)
                 d_out *= (active_f * young)[:, :, None]
 
                 plastic_in += (eta[:, 0] * modulator)[:, None, None] * elig_in
@@ -949,6 +978,16 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
             rec["grow"].append(growth_events.mean().item())
             rec["prune"].append(prune_events.mean().item())
 
+        if not is_instruction:
+            if probe_n > 0:
+                probe_x.append(readout[:probe_n].clone())
+                probe_y.append(env.current_task[:probe_n] * cfg.n_cues
+                               + env.current_cue[:probe_n])
+                probe_m.append(lived[:probe_n].clone())
+            readout_mean = torch.where(
+                lived[:, None], 0.95 * readout_mean + 0.05 * hidden, readout_mean
+            )
+
         del d_in, d_rec
 
     # ----------------------------------------------------------------
@@ -986,6 +1025,9 @@ def run_lives(theta: torch.Tensor, scenarios: Scenarios, cfg: Config,
     }
     if rec is not None:
         result["record"] = rec
+    if probe_n > 0 and probe_x:
+        result["probe"] = (torch.stack(probe_x, dim=1), torch.stack(probe_y, dim=1),
+                           torch.stack(probe_m, dim=1))
     return result
 
 
@@ -1391,82 +1433,164 @@ def ideal_learner_accuracy(cfg: Config, scenarios: Scenarios,
     return 100.0 * correct / (L * scenarios.trials)
 
 
+RULE_VARIANTS: Dict[str, Dict] = {
+    "base": {},
+    "center": {"center": True},
+    "retain": {"retain": None},                 # None -> --retain-value
+    "center+retain": {"center": True, "retain": None},
+    # Diagnostics (not organisms): cue stays visible, no memory needed.
+    "nodelay": {"no_delay": True},
+    "nodelay+center": {"no_delay": True, "center": True},
+}
+
+
+def probe_decode(x: torch.Tensor, y: torch.Tensor, m: torch.Tensor,
+                 n_classes: int, lam: float = 1.0) -> Tuple[float, float]:
+    """
+    Per-life ridge decoder (measurement only, not part of the organism):
+    can the response-time readout tell which class this trial was?
+    Trains on even trials, tests on odd trials of the same life.
+    Returns (decode accuracy, majority-class baseline).
+    """
+    B, N, H = x.shape
+    X = torch.cat([x, torch.ones(B, N, 1, device=x.device)], dim=2)
+    Y = F.one_hot(y, n_classes).float()
+    even = (torch.arange(N, device=x.device) % 2 == 0)[None, :]
+    train = (m & even).float()[..., None]
+    test = m & ~even
+
+    Xt = X * train
+    A = Xt.transpose(1, 2) @ Xt + lam * torch.eye(H + 1, device=x.device)
+    W = torch.linalg.solve(A, Xt.transpose(1, 2) @ (Y * train))
+    pred = (X @ W).argmax(dim=2)
+
+    n_test = test.sum().clamp(min=1)
+    acc = ((pred == y) & test).sum() / n_test
+    majority = (Y * train).sum(dim=1).argmax(dim=1)
+    base = ((y == majority[:, None]) & test).sum() / n_test
+    return 100.0 * acc.item(), 100.0 * base.item()
+
+
+def rule_stats(r: Dict, cfg: Config) -> Dict[str, float]:
+    resp = r["responses"][0].sum().clamp(min=1)
+    pc, pr = r["phase_correct"][0], r["phase_responses"][0]
+    tc = r["task_correct"][0].sum(dim=0)
+    tr = r["task_responses"][0].sum(dim=0).clamp(min=1)
+    out = {
+        "acc": (100.0 * r["correct"][0].sum() / resp).item(),
+        "blind": (100.0 * r["target_count"][0].max(dim=2).values.sum() / resp).item(),
+        "t0_first": (100.0 * tc[0, 0] / tr[0, 0]).item(),
+        "t0_last": (100.0 * tc[0, -1] / tr[0, -1]).item(),
+    }
+    for p in range(cfg.max_tasks):
+        out[f"P{p+1}"] = (100.0 * pc[:, p].sum() / pr[:, p].sum().clamp(min=1)).item()
+    return out
+
+
 def rule_test(args: argparse.Namespace, device: torch.device) -> None:
     """
     Step 1 of the research order: prove the local learning rule works with a
     hand-built genome. No evolution, no growth, no doubt/learnability.
+    Compares representation variants and diagnoses WHY a variant fails.
     """
-    cfg = config_from_args(args)
-    cfg.structure = "fixed"
-    cfg.metacognition = args.metacognition
-    validate_config(cfg)
+    base_cfg = config_from_args(args)
+    base_cfg.structure = "fixed"
+    base_cfg.metacognition = args.metacognition
+    validate_config(base_cfg)
 
-    scenarios = Scenarios(cfg, args.eval_lives, 900_000 + cfg.seed, device)
-    obs_dim = BenchmarkB(cfg, scenarios, 1, device).obs_dim
-    ceiling = ideal_learner_accuracy(cfg, scenarios, device)
+    scenarios = Scenarios(base_cfg, args.eval_lives, 900_000 + base_cfg.seed, device)
+    obs_dim = BenchmarkB(base_cfg, scenarios, 1, device).obs_dim
+    ceiling = ideal_learner_accuracy(base_cfg, scenarios, device)
 
     sizes = [int(s) for s in args.sizes.split(",")]
     eta_logits = [float(v) for v in args.eta_out_grid.split(",")]
     temps = [float(v) for v in args.temperature_grid.split(",")]
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    for v in variants:
+        if v not in RULE_VARIANTS:
+            raise ValueError(f"unknown variant {v}; choose from {list(RULE_VARIANTS)}")
 
-    print("=" * 78)
+    C, T = base_cfg.n_cues, base_cfg.max_tasks
+    print("=" * 96)
     print("RULE TEST — hand-built genome, no evolution, fixed size, "
-          f"metacognition {'on' if cfg.metacognition else 'off'}")
-    print(f"{cfg.max_tasks} tasks x {cfg.n_cues} cues x {cfg.n_actions} actions, "
-          f"{cfg.steps} steps, faults p={cfg.fault_probability}, "
-          f"{args.eval_lives} lives")
-    print(f"chance {100.0 / cfg.n_actions:.1f}%   |   perfect-learner ceiling "
+          f"metacognition {'on' if base_cfg.metacognition else 'off'}")
+    print(f"{T} tasks x {C} cues x {base_cfg.n_actions} actions, {base_cfg.steps} steps, "
+          f"faults p={base_cfg.fault_probability}, {args.eval_lives} lives")
+    print(f"chance {100.0 / base_cfg.n_actions:.1f}%   |   perfect-learner ceiling "
           f"{ceiling:.1f}%")
-    print("=" * 78)
-    print(f"{'size':>4s} {'eta_out':>7s} {'temp':>5s} | {'acc':>6s} "
-          f"{'blind':>6s} {'margin':>7s} |"
-          + "".join(f" {'P' + str(p + 1):>6s}" for p in range(cfg.max_tasks))
-          + f" | {'t0 P1':>6s} {'t0 last':>7s}")
+    print("probe = per-life linear decoder of task x cue from the response-time "
+          "readout (measurement only)")
+    print("=" * 96)
+    print(f"{'variant':15s} {'size':>4s} {'eta':>5s} {'temp':>4s} | {'acc':>6s} "
+          f"{'blind':>6s} {'margin':>6s} |"
+          + "".join(f" {'P' + str(p + 1):>5s}" for p in range(T))
+          + f" | {'t0 P1':>5s} {'t0 end':>6s} | {'probe':>11s} {'cue':>11s}")
 
-    rows = []
-    for size in sizes:
-        cfg.initial_hidden = size
-        cfg.min_hidden = min(cfg.min_hidden, size)
-        for eta_logit in eta_logits:
-            for temp in temps:
-                cfg.init_eta_out = eta_logit
-                cfg.init_temperature = temp
-                theta = initial_genome(cfg, obs_dim, device, cfg.seed)
-                r = run_lives(theta[None], scenarios, cfg, device)
+    summary = []
+    for variant in variants:
+        for size in sizes:
+            best = None
+            for eta_logit in eta_logits:
+                for temp in temps:
+                    cfg = Config(**asdict(base_cfg))
+                    for key, value in RULE_VARIANTS[variant].items():
+                        setattr(cfg, key, args.retain_value if value is None else value)
+                    cfg.initial_hidden = size
+                    cfg.min_hidden = min(cfg.min_hidden, size)
+                    cfg.init_eta_out = eta_logit
+                    cfg.init_temperature = temp
+                    theta = initial_genome(cfg, obs_dim, device, cfg.seed)
+                    st = rule_stats(run_lives(theta[None], scenarios, cfg, device), cfg)
+                    if args.verbose:
+                        print(f"  {variant:13s} {size:4d} {eta_logit:+5.1f} {temp:4.2f} | "
+                              f"{st['acc']:5.1f}% {st['blind']:5.1f}% "
+                              f"{st['acc'] - st['blind']:+6.1f}")
+                    if best is None or st["acc"] > best[0]["acc"]:
+                        best = (st, cfg)
 
-                correct = r["correct"][0]
-                resp = r["responses"][0].sum().clamp(min=1)
-                acc = (100.0 * correct.sum() / resp).item()
-                blind = (100.0 * r["target_count"][0].max(dim=2).values.sum()
-                         / resp).item()
-                pc, pr = r["phase_correct"][0], r["phase_responses"][0]
-                phases = [(100.0 * pc[:, p].sum() / pr[:, p].sum().clamp(min=1)).item()
-                          for p in range(cfg.max_tasks)]
-                tc = r["task_correct"][0].sum(dim=0)
-                tr = r["task_responses"][0].sum(dim=0).clamp(min=1)
-                t0_first = (100.0 * tc[0, 0] / tr[0, 0]).item()
-                t0_last = (100.0 * tc[0, -1] / tr[0, -1]).item()
+            st, cfg = best
+            # Probe the best setting of this variant.
+            r = run_lives(initial_genome(cfg, obs_dim, device, cfg.seed)[None],
+                          scenarios, cfg, device, probe_lives=args.probe_lives)
+            x, y, m = r["probe"]
+            conj, conj_base = probe_decode(x, y, m, T * C)
+            cue, cue_base = probe_decode(x, y % C, m, C)
 
-                rows.append((acc, size, eta_logit, temp, blind))
-                print(f"{size:4d} {0.15 / (1 + math.exp(-eta_logit)):7.3f} "
-                      f"{temp:5.2f} | {acc:5.1f}% {blind:5.1f}% {acc - blind:+6.1f} |"
-                      + "".join(f" {v:5.1f}%" for v in phases)
-                      + f" | {t0_first:5.1f}% {t0_last:6.1f}%")
+            print(f"{variant:15s} {size:4d} {cfg.init_eta_out:+5.1f} "
+                  f"{cfg.init_temperature:4.2f} | {st['acc']:5.1f}% {st['blind']:5.1f}% "
+                  f"{st['acc'] - st['blind']:+6.1f} |"
+                  + "".join(f" {st[f'P{p+1}']:4.1f}%" for p in range(T))
+                  + f" | {st['t0_first']:4.1f}% {st['t0_last']:5.1f}% |"
+                  f" {conj:4.1f}/{conj_base:4.1f}% {cue:4.1f}/{cue_base:4.1f}%")
+            summary.append((variant, size, st, cfg))
 
-    best = max(rows)
-    acc, size, eta_logit, temp, blind = best
-    print("-" * 78)
-    print(f"best: size={size} eta_out={0.15 / (1 + math.exp(-eta_logit)):.3f} "
-          f"(logit {eta_logit:+.1f}) temp={temp:.2f} -> {acc:.1f}% "
-          f"(cue-blind {blind:.1f}%, ceiling {ceiling:.1f}%)")
-    if acc <= blind:
+    print("-" * 96)
+    print("probe/cue columns: decoder accuracy / majority-class baseline. If the "
+          "probe is near its baseline,\nthe cue is not in the representation "
+          "(memory/representation problem, not the learning rule).")
+
+    organisms = [s for s in summary if not s[3].no_delay]
+    if not organisms:
+        return
+    variant, size, st, cfg = max(organisms, key=lambda s: s[2]["acc"])
+    margin = st["acc"] - st["blind"]
+    print(f"\nbest organism variant: {variant} size={size} -> {st['acc']:.1f}% "
+          f"(cue-blind {st['blind']:.1f}%, ceiling {ceiling:.1f}%)")
+
+    flags = f"--init-eta-out {cfg.init_eta_out} --init-temperature {cfg.init_temperature}"
+    if cfg.center:
+        flags += " --center"
+    if cfg.retain > 0:
+        flags += f" --retain {cfg.retain}"
+    if margin <= 0:
         print("VERDICT: rule does NOT beat a cue-blind prior. Do not run evolution yet.")
-    elif acc < args.target:
-        print(f"VERDICT: mapping is learned but below the {args.target:.0f}% target. "
-              "Keep fixing the rule before evolution.")
+    elif st["acc"] < args.target:
+        print(f"VERDICT: mapping is learned (+{margin:.1f} over cue-blind) but below the "
+              f"{args.target:.0f}% target. Keep fixing the rule before evolution.")
     else:
-        print(f"VERDICT: rule works (>= {args.target:.0f}%). Proceed to evolution:")
-        print(f"  --init-eta-out {eta_logit} --init-temperature {temp} --hidden {size}")
+        print(f"VERDICT: rule works (>= {args.target:.0f}%). Proceed to evolution with:")
+    print(f"  python dsm_benchmark_b_v3.py --structure fixed --hidden {size} "
+          f"--no-metacognition {flags}")
 
 
 # =====================================================================
@@ -1546,6 +1670,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="rule-test: keep doubt/learnability connected")
     p.add_argument("--target", type=float, default=60.0,
                    help="rule-test: accuracy the rule must reach")
+    p.add_argument("--variants",
+                   default="base,center,retain,center+retain,nodelay,nodelay+center",
+                   help="rule-test: representation variants to compare")
+    p.add_argument("--retain-value", type=float, default=0.5,
+                   help="rule-test: retain used by the 'retain' variants")
+    p.add_argument("--probe-lives", type=int, default=300,
+                   help="rule-test: lives used by the linear probe")
+    p.add_argument("--verbose", action="store_true",
+                   help="rule-test: print every grid point")
+
+    # Representation options (use the ones rule-test recommends)
+    p.add_argument("--center", action="store_true",
+                   help="read out activity minus each neuron's running mean")
+    p.add_argument("--retain", type=float, default=0.0,
+                   help="leaky units: h = r*h_prev + (1-r)*tanh(.)")
+    p.add_argument("--no-delay", action="store_true",
+                   help="DIAGNOSTIC: cue also visible on response steps")
     return p
 
 
@@ -1558,6 +1699,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         min_hidden=min(args.min_hidden, args.hidden), structure=args.structure,
         random_policy=args.random_policy, plasticity=not args.no_plasticity,
         metacognition=not args.no_metacognition,
+        center=args.center, retain=args.retain, no_delay=args.no_delay,
         init_eta_out=args.init_eta_out, init_temperature=args.init_temperature,
         generations=args.generations, population=args.population,
         lives=args.lives, sigma=args.sigma, es_lr=args.es_lr,
