@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Amoeba Mind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<!-- BODY START -->
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <div class="slide-label">Slide 01 · live culture · brightfield 40×</div>
+      <h1>Amoeba <span>Mind</span></h1>
+    </div>
+    <p>A single cell that imagines each bite before it takes it, grows a brain slot for every new thing it tastes, and doubts itself when reality disagrees. Click the dish to feed it. Shift the world and watch it notice.</p>
+  </header>
+
+  <section class="lab">
+    <div class="stage">
+      <div class="viewport">
+        <canvas id="dish" width="900" height="620" aria-label="Petri dish with the amoeba and particles. Click to drop a particle."></canvas>
+        <div class="chip" id="modeChip" data-mode="ok"><i></i><span id="modeText">Foraging</span></div>
+        <div class="scalebar"><b></b>50 µm</div>
+      </div>
+
+      <div class="controls" role="toolbar" aria-label="Simulation controls">
+        <button id="btnPause" type="button">Pause <kbd>Space</kbd></button>
+        <button id="btnSpeed" type="button">Speed 1× <kbd>F</kbd></button>
+        <button id="btnShift" class="primary" type="button">Shift the world <kbd>S</kbd></button>
+        <span class="sep" aria-hidden="true"></span>
+        <button id="btnMeta" type="button" aria-pressed="true"><span class="toggle-dot"></span>Metacognition <kbd>M</kbd></button>
+        <button id="btnNumb" type="button" aria-pressed="false"><span class="toggle-dot"></span>Numb <kbd>N</kbd></button>
+        <button id="btnImagine" type="button" aria-pressed="true"><span class="toggle-dot"></span>Show imagination <kbd>I</kbd></button>
+        <button id="btnTruth" type="button" aria-pressed="false"><span class="toggle-dot"></span>Show truth <kbd>T</kbd></button>
+        <button id="btnReset" type="button">New culture</button>
+      </div>
+      <div class="dropper" id="dropper" aria-label="Particle to drop">
+        <span class="label">Drop on click:</span>
+      </div>
+    </div>
+
+    <aside class="panel" aria-label="Instrument panel">
+      <section>
+        <h2>Self-state <span id="ageText">0 s</span></h2>
+        <div class="meters">
+          <div class="meter"><span>Energy</span><div class="track"><div class="fill" id="mEnergy"></div><div class="ghost" id="mFelt" hidden></div></div><span class="val" id="vEnergy">0</span></div>
+          <div class="meter"><span>Damage</span><div class="track"><div class="fill bad" id="mDamage"></div></div><span class="val" id="vDamage">0</span></div>
+          <div class="meter"><span>Doubt</span><div class="track"><div class="fill warn" id="mDoubt"></div><div class="tick" id="tCaution"></div></div><span class="val" id="vDoubt">0</span></div>
+          <div class="meter"><span>Anxiety β</span><div class="track"><div class="fill hema" id="mBeta"></div></div><span class="val" id="vBeta">0</span></div>
+        </div>
+        <p class="note" id="stateNote">The tick on the doubt bar is the caution threshold.</p>
+      </section>
+
+      <section>
+        <h2>Brain slots <span id="slotCount">0 / 16</span></h2>
+        <canvas id="brain" width="300" height="300" aria-label="Brain slots: one per learned pattern"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--good)"></i>expects food</span>
+          <span><i style="background:var(--bad)"></i>expects harm</span>
+          <span><i class="ring"></i>slot doubt</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Doubt vs real error <span>last 60 s</span></h2>
+        <canvas id="chart" width="300" height="110" aria-label="Chart of felt doubt and real prediction error"></canvas>
+        <div class="legend">
+          <span><i class="line" style="background:var(--warn)"></i>felt doubt</span>
+          <span><i class="line" style="background:var(--bad)"></i>real error</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>This culture</h2>
+        <div class="stats">
+          <div class="stat"><b id="sBest">0</b><span>best life, s</span></div>
+          <div class="stat"><b id="sLives">1</b><span>cells</span></div>
+          <div class="stat"><b id="sShifts">0</b><span>shifts</span></div>
+          <div class="stat"><b id="sBad">0</b><span>bad bites</span></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Journal</h2>
+        <ol class="journal" id="journal"></ol>
+      </section>
+    </aside>
+  </section>
+
+  <section class="guide">
+    <div>
+      <h2>Try this</h2>
+      <ol>
+        <li>Let it forage for a minute. Each new pattern it tastes <b>imprints</b> a slot in its brain.</li>
+        <li>Press <b>Shift the world</b>. Two foods turn toxic and two toxins become food. Watch the rings on the confident slots go red, doubt climb into caution, and the broken slots get <b>repaired</b>.</li>
+        <li>Turn <b>Metacognition</b> off and shift again. Nothing tells the cell its old slots are wrong, so it keeps biting what used to be food.</li>
+        <li>Turn on <b>Numb</b>. The cell now feels what it imagined, so felt doubt sinks while the real error line climbs. Turn it off and the whole gap lands as one surprise.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>What maps to the research</h2>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>In the dish</th><th>Mechanism</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td>Dashed lines and ghost labels</td><td>Proactive imagination: it predicts its own next energy and damage for every nearby particle and for resting, then picks the best composite utility</td><td><code>imagine_futures</code>, <code>compute_utility</code></td></tr>
+            <tr><td>Energy, damage</td><td>Self-state: resources <i>r</i> and degradation <i>d</i></td><td><code>SelfState</code></td></tr>
+            <tr><td>Anxiety β</td><td>Rises near starvation, heavy damage and high doubt, and discounts uncertain bites</td><td><code>compute_effective_beta</code></td></tr>
+            <tr><td>Doubt bar, caution chip</td><td>Leaky integrator of imagined-vs-real error; above threshold the cell only eats slots it trusts</td><td><code>update_metacognition</code></td></tr>
+            <tr><td>New brain slot</td><td>Novelty-gated imprint growth: one sparse slot per pattern</td><td>V4 <code>imprint</code></td></tr>
+            <tr><td>Red ring on a slot, repair flash</td><td>Slot doubt (confident errors) opens the plasticity gate and triggers REPAIR</td><td>V4.1 slot doubt</td></tr>
+            <tr><td>Metacognition off</td><td>The <code>basic</code> ablation: controller sees no self-model signal</td><td>V4.1 ablations</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+<!-- BODY END -->
+<script src="sim.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
