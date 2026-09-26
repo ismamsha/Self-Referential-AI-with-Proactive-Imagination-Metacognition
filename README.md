@@ -1,5 +1,7 @@
 # Metacognitive Self-Referential Agent (MSRA)
 
+**Play the demo:** [Amoeba Mind](https://ismamsha.github.io/Self-Referential-AI-with-Proactive-Imagination-Metacognition/game/) is a browser game where a single cell imagines each bite, grows a brain slot for each new pattern, and doubts itself when the world shifts. Source in [`game/`](game/).
+
 ## 📝 Overview
 The **Metacognitive Self-Referential Agent (MSRA)** is a novel reinforcement learning architecture that integrates a predictive self-model with dynamic monitoring of endogenous uncertainty ("doubt"). Unlike standard RL agents that treat internal constraints as secondary, MSRA proactively imagines the physiological consequences of actions and modulates risk sensitivity based on its confidence in self-predictions.
 
